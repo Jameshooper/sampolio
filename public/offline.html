@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Offline — Sampolio</title>
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 1rem; padding: 2rem;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        text-align: center;
+        background: #ffffff; color: #171717;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { background: #121212; color: #ededed; }
+      }
+      img { width: 88px; height: 88px; border-radius: 22px; }
+      h1 { font-size: 1.4rem; margin: 0; }
+      p { margin: 0; max-width: 22rem; line-height: 1.5; opacity: 0.8; }
+      button {
+        margin-top: 0.5rem; padding: 0.6rem 1.4rem; font-size: 1rem; cursor: pointer;
+        border: none; border-radius: 0.6rem; background: #2563eb; color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="/icons/icon-192.png" alt="Sampolio" />
+    <h1>You're offline</h1>
+    <p>Sampolio needs a connection to load your financial data. Reconnect and try again.</p>
+    <button onclick="location.reload()">Retry</button>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sampolio-preview",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "export ENCRYPTION_KEY=$(cat data/.encryption_key); export AUTH_SECRET=$(cat data/.auth_secret); export AUTH_URL=http://localhost:4999; export DATA_DIR=$PWD/data; export DEV_AUTH_BYPASS=$(cat data/.dev_user 2>/dev/null); exec ./node_modules/.bin/next dev -p 4999"],
+      "port": 4999,
+      "autoPort": false
+    }
+  ]
+}

@@ -1,0 +1,613 @@
+@layer theme, base, primereact, components, utilities;
+
+@import "tailwindcss";
+@import 'primereact/resources/primereact.min.css';
+@import 'primeicons/primeicons.css';
+
+:root {
+  --background: #F3F6F4;
+  --foreground: #1A211D;
+
+  /* Motion tokens — the app-wide duration scale. Un-layered so any stylesheet
+   * (including public/themes/glass-overrides.css, which loads after the theme
+   * link) can consume them. Easings live in @theme below (emitted to :root by
+   * Tailwind) so they double as `ease-fluid` / `ease-snap` utilities. */
+  --motion-fast: 120ms;  /* press feedback, micro state changes */
+  --motion-base: 180ms;  /* hovers, fades, content swaps */
+  --motion-slow: 250ms;  /* entrances, expanders, nav indicator */
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+
+  /* Forest-green accent ramp — the app's interactive/selection color
+   * (replaces ad-hoc `blue-*` on nav actives, selections, links, focus
+   * rings). Informational blue stays blue; see the TAILWIND vs PRIMEREACT
+   * override block below for the `.text-accent-*` !important pairs. */
+  --color-accent-50: #F2F7F4;
+  --color-accent-100: #DEEBE3;
+  --color-accent-200: #C2D9CC;
+  --color-accent-300: #9FC3AF;
+  --color-accent-400: #6FA58A;
+  --color-accent-500: #47876A;
+  --color-accent-600: #2F6B4F;
+  --color-accent-700: #285A43;
+  --color-accent-800: #1F4634;
+  --color-accent-900: #153224;
+}
+
+/* Motion utilities — generates `ease-fluid`/`ease-snap` and the entrance
+ * animations `animate-fade-in` / `animate-rise-in` / `animate-scale-in`.
+ * Rules: 120–250ms, opacity/transform only, never gate input. Entrances
+ * deliberately use the default `none` fill: with zero delay the `from` frame
+ * still applies from the first paint, and once finished the animation stops
+ * "applying" — a `both`/`forwards` fill would keep the element permanently
+ * promoted (its own stacking context / composited layer), which breaks
+ * `backdrop-filter` on glass headers above it (Chromium doesn't blur
+ * still-promoted sibling layers — text under the cashflow header stayed
+ * crisp) and lingers for the element's whole life. Never add `both` back. */
+@theme {
+  --ease-fluid: cubic-bezier(0.22, 1, 0.36, 1); /* decisive ease-out — entrances, movement */
+  --ease-snap: cubic-bezier(0.2, 0, 0, 1);      /* press/settle — near-instant start */
+
+  --animate-fade-in: fade-in 180ms var(--ease-fluid);
+  --animate-rise-in: rise-in 250ms var(--ease-fluid);
+  --animate-scale-in: scale-in 160ms var(--ease-fluid);
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes rise-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.97); }
+    to   { opacity: 1; transform: none; }
+  }
+}
+
+/* Dark mode variables - set via theme-provider.tsx */
+.dark {
+  --background: #0F1412;
+  --foreground: #E7ECE9;
+}
+
+/* Ambient tint so the glass blur (public/themes/glass-overrides.css) has
+ * something to pick up — a flat body color renders backdrop-filter as an
+ * invisible no-op. `fixed` keeps the gradient anchored to the viewport
+ * instead of scrolling with content. */
+body {
+  background: radial-gradient(1200px 800px at 85% -10%, rgba(47, 107, 79, 0.08), transparent 60%) fixed, var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body), system-ui, sans-serif !important;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.dark body {
+  background: radial-gradient(1200px 800px at 85% -10%, rgba(133, 197, 163, 0.06), transparent 60%) fixed, var(--background);
+}
+
+/* Headings share the body typeface — bolder weight and tighter tracking do
+ * the differentiation instead of a separate font family. */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-body), system-ui, sans-serif !important;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+
+/* Override PrimeReact theme font-family (exclude PrimeIcons) */
+.p-component,
+.p-component *:not(.pi),
+.p-inputtext,
+.p-button,
+.p-dropdown,
+.p-datatable,
+.p-dialog,
+.p-sidebar,
+.p-menubar,
+.p-tabview,
+.p-card,
+.p-tag,
+.p-toast,
+.p-message {
+  font-family: var(--font-body), system-ui, sans-serif !important;
+}
+
+/* Ensure PrimeIcons keep their font */
+.pi {
+  font-family: 'primeicons' !important;
+}
+
+/* Tabular numbers for anything money/date-grid-like, so digits align in
+ * columns instead of jittering with proportional widths. */
+.p-datatable,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.p-card {
+  border-radius: 0.75rem;
+}
+
+/* Un-layered so it beats Tailwind's @layer utilities the same way the
+ * PrimeReact theme link does (see the "TAILWIND vs PRIMEREACT" note below) —
+ * used on the sidebar/top-bar/bottom-nav/command-palette chrome. Actual
+ * blur/tint values come from public/themes/glass-overrides.css tokens. */
+.glass-chrome {
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  border-color: var(--glass-border);
+}
+
+/* Tailwind v4's preflight no longer sets `cursor: pointer` on buttons (v3
+ * did), and PrimeReact's theme CSS covers many sub-widgets but not
+ * `.p-button`/`.p-menuitem-link` (those get their own rule in
+ * public/themes/glass-overrides.css) — so native buttons and role="button"
+ * elements need it restored explicitly here. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+/* Press feedback for custom (non-PrimeReact) interactive surfaces: cards,
+ * tiles, tappable rows. Un-layered (same reason as .glass-chrome) so it also
+ * wins on PrimeReact Cards, whose un-layered theme rules beat @layer. Only
+ * `:active` sets a transform, so Tailwind `hover:scale-*` composes with it —
+ * and press deliberately overrides hover lift while held. */
+.pressable {
+  transition: transform var(--motion-fast) var(--ease-snap),
+              box-shadow var(--motion-base) var(--ease-snap),
+              background-color var(--motion-base) var(--ease-snap);
+}
+.pressable:active {
+  transform: scale(0.98);
+}
+
+/* Centralized hover lift for .pressable: box-shadow only, never transform —
+ * a transform here would beat Tailwind `hover:scale-*` utilities (e.g.
+ * KpiTile's), since .pressable is un-layered and wins over @layer utilities.
+ * .pressable already transitions box-shadow above, so this animates for
+ * free, and the `:active` press composes on top of it while held. Guarded
+ * to real hover devices per the repo's hand-written-:hover rule. */
+@media (hover: hover) and (pointer: fine) {
+  .pressable:hover {
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.10);
+  }
+}
+
+/* Height-animation scaffold for expanders ("Show details", archived toggles).
+ * The grid-template-rows 0fr→1fr trick animates auto-height without JS and is
+ * Safari-safe (interpolate-size/calc-size is Chromium-only; the primary device
+ * is an iOS PWA). Content must stay mounted; add `inert` while closed so
+ * hidden controls aren't focusable. */
+.collapse-grid {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--motion-slow) var(--ease-fluid);
+}
+.collapse-grid.is-open {
+  grid-template-rows: 1fr;
+}
+.collapse-grid > * {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Jiggle-mode reorder (src/components/ui/jiggle-reorder.tsx). The wobble is an
+   infinite transform-only mode indicator — a sanctioned exception to the 250ms
+   rule; it dies under the global reduced-motion kill-switch and the hook also
+   skips it via useReducedMotion. Wobble (rotate, on the inner wrapper) and drag
+   shift (translate, on the outer item) must live on different elements. */
+[data-jiggle-item] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+[data-jiggling] [data-jiggle-item] { touch-action: none; cursor: grab; }
+[data-jiggling] [data-jiggle-item]:not([data-dragging]) { transition: transform var(--motion-base) var(--ease-snap); }
+[data-jiggling] [data-jiggle-item] > [data-jiggle-inner] { animation: jiggle-wobble 250ms ease-in-out infinite; animation-delay: var(--jiggle-phase, 0ms); }
+[data-jiggle-item][data-dragging] { position: relative; z-index: 10; cursor: grabbing; }
+[data-jiggle-item][data-dragging] > [data-jiggle-inner] { animation: none; }
+@keyframes jiggle-wobble { 0% { transform: rotate(-1deg); } 50% { transform: rotate(1deg); } 100% { transform: rotate(-1deg); } }
+
+/* Dialog padding improvements */
+.p-dialog .p-dialog-content {
+  padding: 1.25rem 1.5rem;
+}
+
+.p-dialog .p-dialog-header {
+  padding: 1rem 1.5rem;
+}
+
+.p-dialog .p-dialog-footer {
+  padding: 1rem 1.5rem;
+}
+
+/* ============================================================
+ * MOBILE DIALOGS — cap width/height so no dialog overflows a phone.
+ * A stylesheet !important overrides PrimeReact's inline `style` width, so this
+ * one block fixes every Dialog at once (incl. dynamically created ones). The
+ * max-height + scroll keeps tall forms reachable. Desktop is untouched.
+ * ============================================================ */
+@media (max-width: 640px) {
+  .p-dialog {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    /* Subtract the iOS safe-area insets so a centered dialog clears the dynamic
+     * island / status bar at the top and the home indicator at the bottom. This
+     * also covers `maximized` dialogs: the 95vw width cap above turns them into
+     * a tall centered box, so the same inset-aware height keeps their header out
+     * from under the island in the installed PWA. */
+    max-height: calc(92vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
+  .p-dialog .p-dialog-content {
+    overflow-y: auto;
+  }
+  /* Off-canvas drawers (PrimeReact Sidebar) used left/right shouldn't exceed
+   * the viewport either. */
+  .p-sidebar.p-sidebar-left,
+  .p-sidebar.p-sidebar-right {
+    max-width: 95vw;
+  }
+  /* Denser cards on phones: PrimeReact's default 1.25rem body padding eats a
+   * lot of a 375px viewport. Tap targets inside stay ≥44px. */
+  .p-card .p-card-body {
+    padding: 0.875rem;
+  }
+  .p-card .p-card-content {
+    padding: 0.25rem 0;
+  }
+}
+
+/* ============================================================
+ * MORTGAGE LEDGER — MOBILE DENSITY
+ * The payment-schedule DataTable (mortgage-ledger-table.tsx, wrapper class
+ * `mortgage-ledger`) keeps a single frozen-first-column layout at every width
+ * (per AGENTS.md's table strategy — the wide mortgage ledger doesn't switch to
+ * a card list), but its column sizing is tuned for desktop. Below `lg` a
+ * smaller font + tighter cell padding fit more columns on screen, and the
+ * Month column's 190px inline min-width (set via the Column `style` prop)
+ * would otherwise eat roughly half of a ~390px phone before any amount column
+ * is visible, so it's capped narrower here too. Desktop (min-width: 1024px)
+ * is completely untouched.
+ * ============================================================ */
+@media (max-width: 1023px) {
+  .mortgage-ledger.p-datatable {
+    font-size: 0.75rem;
+  }
+  .mortgage-ledger.p-datatable .p-datatable-tbody > tr > td,
+  .mortgage-ledger.p-datatable .p-datatable-thead > tr > th {
+    padding: 0.375rem 0.5rem;
+  }
+  /* !important beats the Column's inline min-width; `overflow: hidden` is a
+   * safety net so a rare long combination (the actual/forecast tag plus the
+   * reconcile/revert button) clips instead of forcing the frozen column back
+   * out to its old width. */
+  .mortgage-ledger.p-datatable .p-frozen-column {
+    min-width: 150px !important;
+    width: 150px !important;
+    overflow: hidden;
+  }
+}
+
+/* ============================================================
+ * iOS SAFE-AREA INSETS FOR FULL-HEIGHT / TOP-EDGE OVERLAYS
+ * Portalled overlays render at the viewport edges (top: 0), so in the installed
+ * PWA (viewport-fit=cover) their content lands under the dynamic island /
+ * status bar and home indicator. The app's own chrome already pads for this;
+ * these rules do the same for the PrimeReact portals. env() is 0 where there
+ * are no insets (desktop, non-notched), so this is a no-op elsewhere.
+ * ============================================================ */
+
+/* Off-canvas drawers (nav drawer, entity-list drawer): pad the panel so its
+ * header clears the island and its footer clears the home indicator. The panel
+ * background fills the padding, so it still looks edge-to-edge. PrimeReact puts
+ * the position class on the *mask*; the panel (.p-sidebar) is its child. */
+.p-sidebar-mask.p-sidebar-left > .p-sidebar {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+.p-sidebar-mask.p-sidebar-right > .p-sidebar {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Top-anchored toasts (default position for the mortgage / budgets pages) drop
+ * below the island instead of tucking under it. */
+.p-toast.p-toast-top-right,
+.p-toast.p-toast-top-left,
+.p-toast.p-toast-top-center {
+  top: calc(20px + env(safe-area-inset-top)) !important;
+}
+
+/* Input field improvements. NOTE: never pad the .p-dropdown/.p-multiselect
+ * WRAPPER — its label already carries .p-inputtext padding, so wrapper
+ * padding double-pads the control (oversized selects). Sizing is
+ * normalized in public/themes/glass-overrides.css. */
+.p-inputtext,
+.p-calendar .p-inputtext {
+  padding: 0.5rem 0.75rem;
+}
+
+/* Form spacing in dialogs */
+.p-dialog .p-dialog-content form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Card content padding */
+.p-card .p-card-body {
+  padding: 1.25rem;
+}
+
+.p-card .p-card-content {
+  padding: 0;
+}
+
+/* ============================================================
+ * TAILWIND vs PRIMEREACT COLOR OVERRIDES
+ *
+ * PrimeReact theme CSS is loaded via dynamic <link> (un-layered).
+ * In CSS, un-layered styles ALWAYS beat layered styles.
+ * Since Tailwind v4 uses @layer utilities {}, PrimeReact wins.
+ *
+ * Fix: use !important on the Tailwind color utilities we need.
+ * We duplicate both light and dark variants explicitly.
+ * ============================================================ */
+
+/* --- TEXT COLORS --- */
+/* Light mode (default) */
+.text-gray-900 { color: #111827 !important; }
+.text-gray-800 { color: #1f2937 !important; }
+.text-gray-700 { color: #374151 !important; }
+.text-gray-600 { color: #4b5563 !important; }
+.text-gray-500 { color: #6b7280 !important; }
+.text-gray-400 { color: #9ca3af !important; }
+.text-gray-300 { color: #d1d5db !important; }
+.text-gray-200 { color: #e5e7eb !important; }
+.text-gray-100 { color: #f3f4f6 !important; }
+
+/*
+ * Dark mode gray text: DO NOT invert the full scale.
+ * The codebase uses isDark ? 'text-gray-300' : 'text-gray-700' conditionals,
+ * so each class must keep its intended brightness.
+ * Only override text-gray-900 (used without isDark conditional in some places).
+ */
+.dark .text-gray-900 { color: #EFF2F0 !important; }
+.dark .text-gray-800 { color: #E2E7E4 !important; }
+.dark .text-gray-700 { color: #CFD6D1 !important; }
+.dark .text-gray-600 { color: #9AA69E !important; }
+.dark .text-gray-500 { color: #6F7972 !important; }
+.dark .text-gray-400 { color: #9AA69E !important; }
+.dark .text-gray-300 { color: #CFD6D1 !important; }
+.dark .text-gray-200 { color: #E2E7E4 !important; }
+.dark .text-gray-100 { color: #EFF2F0 !important; }
+
+/*
+ * Accent colors: use darker shades in light mode for contrast on white,
+ * and lighter shades in dark mode for contrast on dark backgrounds.
+ */
+.text-green-400 { color: #15803d !important; }  /* green-700 on light */
+.text-green-500 { color: #15803d !important; }  /* green-700 on light */
+.text-green-600 { color: #166534 !important; }  /* green-800 on light */
+.text-red-400   { color: #dc2626 !important; }  /* red-600 on light */
+.text-red-500   { color: #dc2626 !important; }  /* red-600 on light */
+.text-red-600   { color: #b91c1c !important; }  /* red-700 on light */
+.text-blue-400  { color: #2563eb !important; }  /* blue-600 on light */
+.text-blue-500  { color: #2563eb !important; }  /* blue-600 on light */
+.text-blue-600  { color: #1d4ed8 !important; }  /* blue-700 on light */
+.text-blue-700  { color: #1e40af !important; }  /* blue-800 on light */
+.text-yellow-400 { color: #a16207 !important; } /* yellow-700 on light */
+.text-yellow-600 { color: #854d0e !important; } /* yellow-800 on light */
+.text-green-700 { color: #15803d !important; }  /* keep as-is, good contrast */
+.text-red-700   { color: #b91c1c !important; }
+.text-purple-400 { color: #7e22ce !important; } /* purple-700 on light */
+.text-purple-600 { color: #9333ea !important; }
+.text-amber-500  { color: #b45309 !important; } /* amber-700 on light */
+.text-orange-500 { color: #c2410c !important; }
+.text-accent-400 { color: #2F6B4F !important; }
+.text-accent-500 { color: #2F6B4F !important; }
+.text-accent-600 { color: #285A43 !important; }
+.text-accent-700 { color: #1F4634 !important; }
+
+/* Dark mode accent colors */
+.dark .text-green-400 { color: #4ade80 !important; }
+.dark .text-green-500 { color: #4ade80 !important; }  /* brighter in dark mode */
+.dark .text-green-600 { color: #22c55e !important; }
+.dark .text-red-400   { color: #f87171 !important; }
+.dark .text-red-500   { color: #f87171 !important; }  /* brighter in dark mode */
+.dark .text-red-600   { color: #ef4444 !important; }
+.dark .text-blue-400  { color: #60a5fa !important; }
+.dark .text-blue-500  { color: #3b82f6 !important; }
+.dark .text-blue-600  { color: #2563eb !important; }
+.dark .text-blue-700  { color: #1d4ed8 !important; }
+.dark .text-yellow-400 { color: #facc15 !important; }
+.dark .text-yellow-600 { color: #ca8a04 !important; }
+.dark .text-purple-400 { color: #c084fc !important; }
+.dark .text-amber-500  { color: #f59e0b !important; }
+.dark .text-accent-400 { color: #A3D4BA !important; }
+.dark .text-accent-500 { color: #85C5A3 !important; }
+.dark .text-accent-600 { color: #85C5A3 !important; }
+.dark .text-accent-700 { color: #6FAE8D !important; }
+
+/* --- BACKGROUND COLORS --- */
+.bg-gray-50 { background-color: #f9fafb !important; }
+.bg-gray-100 { background-color: #f3f4f6 !important; }
+.bg-gray-800 { background-color: #1f2937 !important; }
+.bg-gray-900 { background-color: #111827 !important; }
+.bg-white { background-color: #ffffff !important; }
+
+/* Dark surfaces: green-tinted neutrals (match the recolored theme CSS —
+ * see scripts/copy-themes.mjs "De-blue the dark surface ramp"). */
+.dark .bg-white { background-color: #1E2420 !important; }
+.dark .bg-gray-50 { background-color: #262C28 !important; }
+.dark .bg-gray-100 { background-color: #333B35 !important; }
+.dark .bg-gray-700 { background-color: #333B35 !important; }
+.dark .bg-gray-800 { background-color: #1E2420 !important; }
+.dark .bg-gray-900 { background-color: #131714 !important; }
+
+/* --- BORDER COLORS --- */
+.dark .border-gray-200 { border-color: #333B35 !important; }
+.dark .border-gray-100 { border-color: #1E2420 !important; }
+.dark .border-gray-700 { border-color: #3F4842 !important; }
+
+/* --- HOVER STATES --- */
+.dark .hover\:bg-gray-100:hover { background-color: #333B35 !important; }
+.dark .hover\:bg-gray-50:hover { background-color: #262C28 !important; }
+.dark .hover\:bg-gray-700:hover { background-color: #3F4842 !important; }
+.dark .hover\:bg-gray-800:hover { background-color: #232A25 !important; }
+
+/* Progress bars driven by the projection scrubber must track it instantly
+ * (PrimeReact's base CSS animates .p-progressbar-value-animate over 1s). */
+.progressbar-instant .p-progressbar-value-animate {
+  transition: none;
+}
+
+/* ============================================================
+ * PRIMEREACT STEPS — fix text cropping in horizontal layout
+ * The MDC theme constrains step titles; ensure they don't clip.
+ * ============================================================ */
+.p-steps .p-steps-item .p-menuitem-link .p-steps-title {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+}
+
+.p-steps .p-steps-item .p-menuitem-link {
+  overflow: visible !important;
+}
+
+.p-steps .p-steps-item {
+  overflow: visible !important;
+}
+
+/* ============================================================
+ * PRIMEREACT TOOLTIP — wrap long help text to a readable width.
+ * The app-wide tooltip (sidebar-nav, target="[data-pr-tooltip]") has no
+ * max-width, so long field-help strings would render as one very wide line.
+ * ============================================================ */
+.p-tooltip .p-tooltip-text {
+  max-width: 24rem;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+/* ============================================================
+ * FLASH HIGHLIGHT — briefly tints a deep-linked row (bank ledger "?tx=",
+ * split expense "?expense=") so the user's eye finds it after a scroll.
+ * `--primary-color` comes from the PrimeReact theme link swapped in by
+ * theme-provider.tsx (public/themes/sampolio-{light,dark}.css), so this
+ * already tracks light/dark without a separate override.
+ * ============================================================ */
+@keyframes flash-highlight {
+  0%, 100% { background-color: transparent; }
+  25%, 75% { background-color: color-mix(in srgb, var(--primary-color, #673ab7) 18%, transparent); }
+}
+
+.flash-highlight {
+  animation: flash-highlight 1.8s ease-in-out 1;
+}
+
+/* ============================================================
+ * SUCCESS CELEBRATIONS — the checkmark pop (expense created) and the confetti
+ * burst (settle-up). These are the two sanctioned exceptions to the >250ms
+ * motion rule: brief, one-shot, pointer-events-none reward moments fired via
+ * the CelebrationProvider (JS bails out entirely under reduced motion, so the
+ * global kill-switch below never even needs to neutralize them). The confetti
+ * is a canvas rAF loop — no CSS. The checkmark celebration (badge + ring +
+ * particle dots) is a firm "operation done" confirmation, ~1500ms end to end —
+ * comparable in length to the settle-up confetti, but a touch more festive
+ * than a bare pop. Every animation in this block uses `forwards` so its end
+ * state (usually opacity 0) holds until the provider unmounts the overlay
+ * ~1550ms later — without it the element would snap back to its base CSS
+ * (opacity 1) for the last ~50ms and flicker back into view.
+ * ============================================================ */
+@keyframes celebrate-pop {
+  0% { transform: scale(0.3); opacity: 0; }
+  20% { transform: scale(1.12); opacity: 1; }
+  32% { transform: scale(0.96); }
+  45% { transform: scale(1); }
+  80% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1); opacity: 0; }
+}
+@keyframes celebrate-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes celebrate-ring {
+  0% { transform: scale(1); opacity: 0.45; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+@keyframes celebrate-dot {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(0.3); opacity: 0; }
+}
+.celebrate-container {
+  position: relative;
+  width: 72px;
+  height: 72px;
+}
+.celebrate-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 9999px;
+  background: var(--green-500, #22c55e);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.25);
+  animation: celebrate-pop 1500ms var(--ease-fluid) 1 forwards;
+}
+.celebrate-check {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: celebrate-draw 450ms var(--ease-snap) 250ms forwards;
+}
+.celebrate-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 3px solid var(--green-500, #22c55e);
+  opacity: 0.45;
+  animation: celebrate-ring 900ms var(--ease-fluid) forwards;
+}
+.celebrate-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 9999px;
+  opacity: 0;
+  animation: celebrate-dot 800ms var(--ease-fluid) forwards;
+}
+
+/* ============================================================
+ * REDUCED MOTION — the single, global kill-switch. Un-layered !important
+ * beats the un-layered PrimeReact theme link, so this neutralizes PrimeReact's
+ * dialog/overlay fades and progressbar animation too, plus everything above.
+ * Durations are 0.01ms (not `none`/0) so `animation-fill-mode: both`
+ * end-states apply and transitionend-dependent code (PrimeReact CSSTransition)
+ * still fires. Never add per-component prefers-reduced-motion blocks — this
+ * is the one mechanism; JS-driven motion uses useReducedMotion() instead.
+ * ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "sampolio",
+  "version": "3.8.1",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@11.5.1",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "dev": "next dev -p 4999",
+    "dev:preview": "DEV_AUTH_BYPASS=you@example.com next dev -p 4999",
+    "build": "npm run copy-themes && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "copy-themes": "node scripts/copy-themes.mjs",
+    "postinstall": "npm run copy-themes",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.4.0",
+    "bcryptjs": "^3.0.3",
+    "chart.js": "^4.5.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.0.6",
+    "jose": "^6.2.4",
+    "lucide-react": "^1.25.0",
+    "next": "16.2.11",
+    "next-auth": "5.0.0-beta.31",
+    "primeicons": "^7.0.0",
+    "primereact": "^10.9.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-easy-crop": "^6.2.2",
+    "react-hook-form": "^7.82.0",
+    "react-icons": "^5.7.0",
+    "uuid": "^14.0.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.2.11",
+    "jsdom": "^29.1.1",
+    "sharp": "^0.35.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
