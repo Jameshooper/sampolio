@@ -43,7 +43,7 @@ import {
   describeBankError,
 } from './client';
 import { mapBalances, mapTransactions, mapSessionAccountHashes, type MappedBalance } from './mappers';
-import { mergeTransactions } from './dedup';
+import { mergeTransactions, type FetchWindow } from './dedup';
 import { repairDegenerateBookingDates } from './repair-booking-dates';
 import { applyLinkBalances } from './apply-link-balances';
 import { linkIdentityKey, isLinkFresh } from './link-identity';
@@ -78,9 +78,26 @@ function todayYmd(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 function subDaysYmd(ymd: string, days: number): string {
-  const d = new Date(`${ymd}T00:00:00.000Z`);
+  // Slice first: a stored cursor / bookingDate may be a full ISO datetime, which
+  // would otherwise build an Invalid Date and throw on toISOString().
+  const d = new Date(`${ymd.slice(0, 10)}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() - days);
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Whether this run should spend an extra transactions call on the PDNG set.
+ * Attended runs (a PSU IP is present, so the bank's rate limit does not apply)
+ * always do. Unattended runs only on the first sync of the UTC day, keeping
+ * unattended calls to the transactions endpoint at ≤4 per account per day
+ * (3 scheduled booked fetches + 1 pending).
+ */
+export function shouldFetchPending(
+  psuPresent: boolean,
+  lastSyncedAt: string | undefined,
+  today: string
+): boolean {
+  return psuPresent || !lastSyncedAt || lastSyncedAt.slice(0, 10) < today;
 }
 
 /** Invalidate cache tags, tolerating a missing request scope (background tick). */
@@ -125,6 +142,8 @@ function logSyncSummary(
       console.log(
         `[bank-sync]   ${roleById.get(r.linkedAccountId) ?? 'acct'} bal=${r.balanceFetched} ` +
           `+${r.txAdded}/~${r.txUpdated}/-${r.txRemoved ?? 0} range=${r.fromDate}..${r.toDate}` +
+          (r.pendingFetched != null ? ` pdng=${r.pendingFetched}` : '') +
+          (r.pendingFetchOk === false ? ' pdngERR' : '') +
           (r.error ? ` ERR=${r.error}` : '')
       );
     }
@@ -266,8 +285,9 @@ async function doRunSync(
     primaryLink: BankAccountLink;
     incoming: BankTransaction[];
     balances: MappedBalance[];
-    fromDate: string;
-    toDate: string;
+    // Undefined when the primary fetch covered booked rows only — a sibling must
+    // not prune pendings on the strength of a fetch that never asked for them.
+    pruneWindow: FetchWindow | undefined;
   }): Promise<void> {
     const identityKey = linkIdentityKey(params.primaryLink);
     let all: { userId: string; connection: BankConnection }[];
@@ -305,10 +325,12 @@ async function doRunSync(
             ...t,
             linkedAccountId: siblingLink.id,
           }));
-          const { merged } = mergeTransactions(existing, siblingIncoming, nowIso, {
-            fromDate: params.fromDate,
-            toDate: params.toDate,
-          });
+          const { merged } = mergeTransactions(
+            existing,
+            siblingIncoming,
+            nowIso,
+            params.pruneWindow
+          );
           await writeBankTransactions(siblingUserId, siblingLink.id, merged);
           siblingTags.add(`user:${siblingUserId}:bank-account:${siblingLink.id}:transactions`);
 
@@ -322,7 +344,10 @@ async function doRunSync(
             availableCredit: applied.availableCredit,
             creditLimit: applied.creditLimit,
             syncCursor: {
-              lastBookingDate: merged[0]?.bookingDate ?? siblingLink.syncCursor?.lastBookingDate,
+              // Newest BOOKED row only — see the primary cursor's note.
+              lastBookingDate:
+                merged.find((t) => t.status === 'booked')?.bookingDate ??
+                siblingLink.syncCursor?.lastBookingDate,
               lastSeenEntryRefs: merged.slice(0, 25).map((t) => t.dedupKey),
               // Preserved untouched: the sibling's own deep backfill (if still
               // pending) must still run on their own session, not be marked
@@ -447,12 +472,54 @@ async function doRunSync(
         continuationKey = mapped.continuationKey;
       } while (continuationKey && ++guard < 50);
 
+      // --- pending (PDNG) transactions, separate request ---
+      // Every ASPSP returns booked rows only unless `transaction_status` is sent,
+      // so pendings need their own paginated fetch. Non-fatal by design: booked
+      // data is the sync's contract, pendings are an enhancement.
+      let pendingFetchOk = false;
+      if (shouldFetchPending(!!opts.psuIp, current.lastSyncedAt, today)) {
+        try {
+          let pendingCount = 0;
+          let pendingKey: string | undefined;
+          let pendingGuard = 0;
+          do {
+            const rawPending = await getAccountTransactions(
+              link.accountUid,
+              {
+                dateFrom: fromDate,
+                dateTo: today,
+                continuationKey: pendingKey,
+                strategy: 'default',
+                transactionStatus: 'PDNG',
+              },
+              opts.psuIp
+            );
+            const mapped = mapTransactions(rawPending, link.id, nowIso, () => uuidv4());
+            incoming.push(...mapped.transactions);
+            pendingCount += mapped.transactions.length;
+            pendingKey = mapped.continuationKey;
+          } while (pendingKey && ++pendingGuard < 50);
+          result.pendingFetched = pendingCount;
+          pendingFetchOk = true;
+        } catch (err) {
+          console.warn(
+            `[bank-sync] pending fetch skipped (${connection.aspspName}/${link.accountRole}):`,
+            isBankSyncVerbose() ? describeBankError(err) : redactBankError(err)
+          );
+        }
+        result.pendingFetchOk = pendingFetchOk;
+      }
+
       // Reconcile against the fetched window: absorb overlap AND prune stale
-      // pendings the bank no longer reports in [fromDate, today].
-      const { merged, added, updated, removed } = mergeTransactions(prior, incoming, nowIso, {
-        fromDate,
-        toDate: today,
-      });
+      // pendings the bank no longer reports in [fromDate, today]. Only when the
+      // PDNG set was actually fetched — a booked-only fetch says nothing about
+      // pendings and must not prune them.
+      const { merged, added, updated, removed } = mergeTransactions(
+        prior,
+        incoming,
+        nowIso,
+        pendingFetchOk ? { fromDate, toDate: today } : undefined
+      );
       await writeBankTransactions(userId, link.id, merged);
       result.txAdded = added;
       result.txUpdated = updated;
@@ -465,7 +532,12 @@ async function doRunSync(
       const balances = mapBalances(rawBal);
 
       const newCursor = {
-        lastBookingDate: merged[0]?.bookingDate ?? link.syncCursor?.lastBookingDate,
+        // Anchor the next incremental window on the newest BOOKED row: a pending
+        // row's date can sit ahead of it (or move on booking), which would walk
+        // the window past history the bank has not finalized yet.
+        lastBookingDate:
+          merged.find((t) => t.status === 'booked')?.bookingDate ??
+          link.syncCursor?.lastBookingDate,
         lastSeenEntryRefs: merged.slice(0, 25).map((t) => t.dedupKey),
         backfilledThrough: isBackfill ? today : link.syncCursor?.backfilledThrough ?? today,
       };
@@ -513,8 +585,7 @@ async function doRunSync(
             primaryLink: current,
             incoming,
             balances,
-            fromDate,
-            toDate: today,
+            pruneWindow: pendingFetchOk ? { fromDate, toDate: today } : undefined,
           });
         } catch (err) {
           console.error('[bank-sync] fan-out failed:', redactBankError(err));

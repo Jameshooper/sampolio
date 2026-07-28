@@ -228,6 +228,73 @@ describe('mapTransactions', () => {
     expect(transactions[0].transactionDate).toBe('2024-09-15');
   });
 
+  it('keys a PDNG row by entry_reference and dates it from transaction_date', () => {
+    // Live Nordea card shape for `transaction_status=PDNG`: a stable hex
+    // reference, no booking/value date, the purchase date in transaction_date.
+    const { transactions } = mapTransactions(
+      {
+        transactions: [
+          {
+            entry_reference: '67299f98ab',
+            booking_date: null as unknown as undefined,
+            value_date: null as unknown as undefined,
+            transaction_date: '2026-07-28',
+            status: 'PDNG',
+            credit_debit_indicator: 'DBIT',
+            transaction_amount: { currency: 'EUR', amount: '42.90' },
+            creditor: { name: 'Kauppa' },
+            bank_transaction_code: { description: 'Korttiosto' },
+          },
+        ],
+      },
+      'acct-1',
+      now,
+      idFactory
+    );
+    expect(transactions[0]).toMatchObject({
+      dedupKey: '67299f98ab',
+      entryReference: '67299f98ab',
+      status: 'pending',
+      bookingDate: '2026-07-28',
+      transactionDate: '2026-07-28',
+      amount: -42.9,
+      counterpartyName: 'Kauppa',
+      bankTransactionCode: 'Korttiosto',
+    });
+  });
+
+  it('falls back to a synthetic key for a PDNG row with no entry_reference', () => {
+    const { transactions } = mapTransactions(
+      {
+        transactions: [
+          { transaction_date: '2026-07-28', status: 'PDNG', credit_debit_indicator: 'DBIT', transaction_amount: { currency: 'EUR', amount: '9.00' }, creditor: { name: 'Kiosk' } },
+        ],
+      },
+      'acct-1',
+      now,
+      idFactory
+    );
+    expect(transactions[0].status).toBe('pending');
+    expect(transactions[0].dedupKey.startsWith('syn:')).toBe(true);
+  });
+
+  it('uses a synthetic key for an unknown status even with an entry_reference', () => {
+    // Only BOOK and PDNG carry an identity guarantee; anything else is content-keyed.
+    const { transactions } = mapTransactions(
+      {
+        transactions: [
+          { entry_reference: 'r-odd', booking_date: '2026-07-28', status: 'INFO', credit_debit_indicator: 'DBIT', transaction_amount: { currency: 'EUR', amount: '1.00' } },
+        ],
+      },
+      'acct-1',
+      now,
+      idFactory
+    );
+    expect(transactions[0].status).toBe('other');
+    expect(transactions[0].dedupKey.startsWith('syn:')).toBe(true);
+    expect(transactions[0].entryReference).toBe('r-odd');
+  });
+
   it('still falls back to the sync day when the bank gives no dates at all', () => {
     const { transactions } = mapTransactions(
       {

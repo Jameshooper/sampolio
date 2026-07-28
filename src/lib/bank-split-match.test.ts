@@ -106,6 +106,15 @@ describe('matchTransactionsToSplits', () => {
     expect(out.has('tx2')).toBe(false);
   });
 
+  it('matches on transactionDate (purchase date) when bookingDate is 4 days later, outside tolerance', () => {
+    // bookingDate alone would land outside the ±3 day window; transactionDate
+    // (the real purchase date) makes it an exact match.
+    const t = tx({ id: 'tx1', amount: -10, bookingDate: '2026-07-05', transactionDate: '2026-07-01' });
+    const c = candidate({ expenseId: 'e1', amountCents: 1000, date: '2026-07-01' });
+    const out = matchTransactionsToSplits([t], [c]);
+    expect(out.get('tx1')).toMatchObject({ kind: 'heuristic', expenseId: 'e1' });
+  });
+
   it('matches a bookingDate with a time component against a plain-date candidate', () => {
     const t = tx({ id: 'tx1', amount: -10, bookingDate: '2026-07-01T09:30:00' });
     const c = candidate({ expenseId: 'e1', amountCents: 1000, date: '2026-07-01' });

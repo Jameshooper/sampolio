@@ -12,7 +12,7 @@ import { Button } from 'primereact/button';
 import { MdCallSplit, MdExpandMore } from 'react-icons/md';
 import { formatCurrency, formatYearMonth } from '@/lib/constants';
 import { useAppContext } from '@/components/layout/app-layout';
-import { maskIban } from '@/lib/bank-utils';
+import { maskIban, txDisplayDate } from '@/lib/bank-utils';
 import { guessCategory } from '@/lib/split-utils';
 import { QuickAddSplitModal, type QuickAddSplitInitial } from '@/components/split/quick-add-split-modal';
 import type { BankSplitMatch } from '@/lib/bank-split-match';
@@ -136,7 +136,7 @@ export function BankLedgerTable({
     setSplitInitial({
       title,
       amount: Math.abs(t.amount),
-      date: t.bookingDate.slice(0, 10),
+      date: txDisplayDate(t), // prefill with the purchase date, not the booking date
       category: guessCategory(title),
       bankLink: {
         txId: t.id,
@@ -150,8 +150,19 @@ export function BankLedgerTable({
     });
   };
 
+  // Filtered, then re-sorted descending by the displayed (purchase) date: the
+  // incoming array is bookingDate-sorted, but a purchase can date up to a few
+  // days before its booking, so rendering it in bookingDate order would show
+  // rows out of order. `dedupKey` breaks ties so same-day rows keep a stable,
+  // deterministic order across renders.
   const filtered = useMemo(
-    () => transactions.filter((t) => matchesQuery(t, query.trim())),
+    () =>
+      transactions
+        .filter((t) => matchesQuery(t, query.trim()))
+        .slice()
+        .sort(
+          (a, b) => txDisplayDate(b).localeCompare(txDisplayDate(a)) || b.dedupKey.localeCompare(a.dedupKey)
+        ),
     [transactions, query]
   );
 
@@ -169,7 +180,7 @@ export function BankLedgerTable({
   const byMonth = useMemo(() => {
     const map = new Map<string, BankTransaction[]>();
     for (const t of filtered) {
-      const ym = t.bookingDate.slice(0, 7);
+      const ym = txDisplayDate(t).slice(0, 7);
       const arr = map.get(ym) ?? [];
       arr.push(t);
       map.set(ym, arr);
@@ -235,7 +246,7 @@ export function BankLedgerTable({
     const tx = transactions.find((t) => t.id === highlightTxId);
     if (!tx) return;
 
-    const ym = tx.bookingDate.slice(0, 7);
+    const ym = txDisplayDate(tx).slice(0, 7);
     const monthIdx = byMonth.findIndex(([m]) => m === ym);
     if (monthIdx >= 0 && monthIdx >= visibleMonths) setVisibleMonths(monthIdx + 1);
     setExpandedMobile((m) => ({ ...m, [tx.id]: true }));
@@ -296,7 +307,7 @@ export function BankLedgerTable({
   }
 
   const dateBody = (t: BankTransaction) => {
-    const { date, time } = fmtDateTime(t.bookingDate);
+    const { date, time } = fmtDateTime(txDisplayDate(t));
     return (
       <div className="whitespace-nowrap">
         <div>{date}</div>
@@ -336,7 +347,7 @@ export function BankLedgerTable({
 
   const splitFlagBody = (t: BankTransaction & { _splitMatch?: BankSplitMatch }) => {
     const match = t._splitMatch ?? splitMatches?.get(t.id);
-    return match ? <SplitFlag match={match} txDate={t.bookingDate} /> : null;
+    return match ? <SplitFlag match={match} txDate={txDisplayDate(t)} /> : null;
   };
 
   const detailRow = (label: string, value: string | null | undefined) =>
@@ -355,6 +366,10 @@ export function BankLedgerTable({
         <span className="opacity-60 w-40 shrink-0">Status</span>
         <span>{STATUS_TIP[t.status]}</span>
       </div>
+      {/* Always shown: the row can now display the purchase date instead of
+          the booking date (see txDisplayDate), so the true booking date must
+          stay inspectable here. */}
+      {detailRow('Booking date', t.bookingDate)}
       {detailRow('Value date', t.valueDate)}
       {detailRow('Transaction date', t.transactionDate)}
       {detailRow('Counterparty account', maskIban(t.counterpartyAccount) || undefined)}
@@ -487,7 +502,7 @@ export function BankLedgerTable({
                       aria-expanded={open}
                     >
                       <div className="flex items-center gap-2">
-                        <span className="w-10 shrink-0 tabular-nums text-xs opacity-60">{fmtDateShort(t.bookingDate)}</span>
+                        <span className="w-10 shrink-0 tabular-nums text-xs opacity-60">{fmtDateShort(txDisplayDate(t))}</span>
                         <span
                           className={`w-2 h-2 rounded-full shrink-0 ${statusDotClass(t.status)}`}
                           title={STATUS_TIP[t.status]}
@@ -515,7 +530,7 @@ export function BankLedgerTable({
                         hydration), not inline with the row text. */}
                     {match && (
                       <span className="self-center shrink-0">
-                        <SplitFlag match={match} txDate={t.bookingDate} />
+                        <SplitFlag match={match} txDate={txDisplayDate(t)} />
                       </span>
                     )}
                     {t.amount < 0 && (

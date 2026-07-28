@@ -1473,6 +1473,8 @@ export interface BankSyncRunAccountResult {
   txAdded: number;
   txUpdated: number;
   txRemoved?: number; // stale pending rows pruned this run (optional: absent in old run history)
+  pendingFetched?: number; // PDNG rows fetched this run (absent = pending fetch not attempted)
+  pendingFetchOk?: boolean; // absent = not attempted; false = attempted, failed non-fatally
   fromDate?: string;
   toDate?: string;
   error?: string; // code only

@@ -7,6 +7,7 @@ import {
   isSyncFailing,
   sortConnectionsByAccountOrder,
   effectiveCardNumbers,
+  txDisplayDate,
 } from './bank-utils';
 import { SYNC_FAILURE_ALERT_THRESHOLD } from './bank/constants';
 import type { BankAccountLink, BankConnection } from '@/types';
@@ -133,6 +134,21 @@ describe('effectiveCardNumbers', () => {
       availableCredit: undefined,
       creditLimit: undefined,
     });
+  });
+});
+
+describe('txDisplayDate', () => {
+  it('prefers transactionDate over bookingDate', () => {
+    expect(txDisplayDate({ transactionDate: '2026-07-01', bookingDate: '2026-07-04' })).toBe('2026-07-01');
+  });
+
+  it('falls back to bookingDate when transactionDate is absent', () => {
+    expect(txDisplayDate({ bookingDate: '2026-07-04' })).toBe('2026-07-04');
+  });
+
+  it('truncates an ISO-datetime value to YYYY-MM-DD', () => {
+    expect(txDisplayDate({ transactionDate: '2026-07-01T09:30:00', bookingDate: '2026-07-04' })).toBe('2026-07-01');
+    expect(txDisplayDate({ bookingDate: '2026-07-04T00:00:00.000Z' })).toBe('2026-07-04');
   });
 });
 

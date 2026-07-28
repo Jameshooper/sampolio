@@ -198,6 +198,9 @@ export interface TransactionsQuery {
   dateTo?: string;
   continuationKey?: string;
   strategy?: 'default' | 'longest';
+  // Omitted ⇒ every ASPSP returns booked rows only; 'PDNG' asks for the
+  // pending/authorized-not-yet-booked set, which needs its own request.
+  transactionStatus?: string;
 }
 
 export async function getAccountTransactions(
@@ -210,6 +213,7 @@ export async function getAccountTransactions(
   if (query.dateTo) params.set('date_to', query.dateTo);
   if (query.continuationKey) params.set('continuation_key', query.continuationKey);
   if (query.strategy) params.set('strategy', query.strategy);
+  if (query.transactionStatus) params.set('transaction_status', query.transactionStatus);
   const qs = params.toString();
   return ebFetch(
     `/accounts/${encodeURIComponent(accountUid)}/transactions${qs ? `?${qs}` : ''}`,

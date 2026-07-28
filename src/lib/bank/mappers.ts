@@ -277,8 +277,12 @@ export function mapTransactions(
       const balanceAfterRaw = t.balance_after_transaction?.amount;
       const balanceAfter = balanceAfterRaw != null ? toNumber(balanceAfterRaw) : undefined;
 
+      // An `entry_reference` keys both booked AND pending rows: per Enable
+      // Banking it is only returned for a pending row when it survives booking
+      // unchanged, so it is the strongest pending→booked identity available.
+      // `status === 'other'` keeps the synthetic fallback (no such guarantee).
       const dedupKey =
-        status === 'booked' && entryReference
+        entryReference && (status === 'booked' || status === 'pending')
           ? entryReference
           : syntheticDedupKey({
               amount: signedAmount,

@@ -10,7 +10,10 @@
  *    row's amount).
  *  - Heuristic: no explicit link exists, but an unlinked split expense has the
  *    same amount and a nearby date — covers expenses added manually in Split
- *    before "Split this" existed, or without going through the bank page.
+ *    before "Split this" existed, or without going through the bank page. The
+ *    date compared is the purchase date (`transactionDate ?? bookingDate`),
+ *    since split expenses are recorded on the day the purchase happened, not
+ *    the day the bank booked it (which can trail by a few days).
  *
  * Matching is greedy one-to-one so a recurring near-identical expense (e.g. a
  * €12.99 subscription split every month) doesn't flag every bank row that
@@ -25,6 +28,7 @@ export interface BankTxForMatch {
   amount: number; // signed, account currency
   currency: string;
   bookingDate: string; // 'YYYY-MM-DD' or a full ISO datetime
+  transactionDate?: string; // real purchase date, when the bank provides one
 }
 
 export interface BankSplitMatch {
@@ -94,7 +98,7 @@ export function matchTransactionsToSplits(
     const amountCents = Math.round(Math.abs(tx.amount) * 100);
     const bucket = byAmountKey.get(`${tx.currency}:${amountCents}`);
     if (!bucket) continue;
-    const txDate = toDate(tx.bookingDate);
+    const txDate = toDate(tx.transactionDate ?? tx.bookingDate);
     for (const candidate of bucket) {
       const distance = Math.abs(differenceInCalendarDays(txDate, toDate(candidate.date)));
       if (distance <= HEURISTIC_DAY_TOLERANCE) pairs.push({ txId: tx.id, candidate, distance });

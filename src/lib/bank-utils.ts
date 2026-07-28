@@ -150,6 +150,13 @@ export function effectiveCardNumbers(
   return { outstanding, availableCredit, creditLimit };
 }
 
+/** The date a transaction is displayed/sorted under in the UI: the real
+ *  purchase date when the bank provides one, else the booking date.
+ *  Engines (retrospective, card billing, dedup, cursors) stay on bookingDate. */
+export function txDisplayDate(t: { transactionDate?: string; bookingDate: string }): string {
+  return (t.transactionDate ?? t.bookingDate).slice(0, 10);
+}
+
 /** Mask an IBAN for display: "FI••••1234". Never show the full IBAN. */
 export function maskIban(iban?: string): string {
   if (!iban) return '';

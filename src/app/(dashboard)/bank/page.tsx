@@ -20,7 +20,13 @@ import { useToast } from '@/components/providers/toast-provider';
 import { useAppContext } from '@/components/layout/app-layout';
 import { getMySplitLinkCandidates } from '@/lib/actions/split-groups';
 import { matchTransactionsToSplits } from '@/lib/bank-split-match';
-import { maskIban, getConsentExpiryInfo, sortConnectionsByAccountOrder, effectiveCardNumbers } from '@/lib/bank-utils';
+import {
+  maskIban,
+  getConsentExpiryInfo,
+  sortConnectionsByAccountOrder,
+  effectiveCardNumbers,
+  txDisplayDate,
+} from '@/lib/bank-utils';
 import { formatCurrency } from '@/lib/constants';
 import { BankLedgerTable } from '@/components/bank/bank-ledger-table';
 import { AccountPicker, roleIcon } from '@/components/bank/account-picker';
@@ -276,7 +282,7 @@ function BankPageInner() {
   // candidates for the months it covers so rows can be flagged "already
   // split" (see src/lib/bank-split-match.ts).
   const loadCandidatesFor = useCallback(async (linkId: string, txs: BankTransaction[]) => {
-    const months = [...new Set(txs.map((t) => t.bookingDate.slice(0, 7)))];
+    const months = [...new Set(txs.map((t) => txDisplayDate(t).slice(0, 7)))];
     const res = months.length > 0 ? await getMySplitLinkCandidates(months) : null;
     setCandidatesByLink((prev) => ({ ...prev, [linkId]: res?.success && res.data ? res.data : [] }));
   }, []);
