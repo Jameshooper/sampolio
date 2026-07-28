@@ -117,10 +117,10 @@ components.
 | `salary.ts` | `getSalaryConfigs`, `getSalaryConfigById`, `createSalaryConfig`, `updateSalaryConfig`, `deleteSalaryConfig` |
 | `scenario.ts` | `runScenarioProjection` |
 | `shared-mortgages.ts` | `getMyMortgages`, `getMortgage`, `getMortgageProjectionInputs`, `getMyMortgageEquity`, `createMortgage`, `updateMortgage`, `updateMortgageLoan`, `deleteMortgage`, `addMortgageMemberByEmail`, `removeMortgageMember`, `updateMortgageMember`, `setMyMortgageLinkedAccount`, `setMortgageRate`, `deleteMortgageRate`, `setMortgageCost`, `deleteMortgageCost`, `addMortgageExtraPayment`, `deleteMortgageExtraPayment`, `recordMortgageBalanceSnapshot`, `deleteMortgageBalanceSnapshot`, `getMortgageActuals`, `importMortgageActuals`, `clearMortgageActuals`, `reconcileMortgageMonth`, `revertMortgageMonth` |
-| `split-groups.ts` | `getMySplitGroups`, `getSplitGroupView`, `getSplitExpenses`, `getSplitActivity`, `getSplitInsights`, `getMySplitNetBalance`, `getMySplitLinkCandidates`, `getSettleUpSuggestions`, `createSplitGroup`, `updateSplitGroup`, `deleteSplitGroup`, `addSplitGroupMember`, `removeSplitGroupMember`, `setDefaultSplitGroup`, `createSplitExpense`, `quickAddSplitExpense`, `updateSplitExpense`, `deleteSplitExpense`, `recordSettleUp`, `createSplitRecurrenceRule`, `updateSplitRecurrenceRule`, `deleteSplitRecurrenceRule`, `catchUpGroupRecurrences`, `importSplitwiseCsv`, `markSplitGroupSeen` |
+| `split-groups.ts` | `getMySplitGroups`, `getSplitGroupView`, `getSplitExpenses`, `getSplitActivity`, `getSplitInsights`, `getMySplitNetBalance`, `getMySplitLinkCandidates`, `getSettleUpSuggestions`, `createSplitGroup`, `updateSplitGroup`, `deleteSplitGroup`, `addSplitGroupMember`, `removeSplitGroupMember`, `setDefaultSplitGroup`, `createSplitExpense`, `quickAddSplitExpense`, `updateSplitExpense`, `deleteSplitExpense`, `recordSettleUp`, `createSplitRecurrenceRule`, `updateSplitRecurrenceRule`, `deleteSplitRecurrenceRule`, `catchUpGroupRecurrences`, `importSplitwiseCsv`, `markSplitGroupSeen` — every mutating action additionally calls `notifySplitActivity` (`src/lib/split-notify.ts`) after its write + cache invalidation, which schedules a Home Assistant webhook POST for after the response (§11) |
 | `taxed-income.ts` | `getTaxedIncomes`, `getTaxedIncomeById`, `createTaxedIncome`, `updateTaxedIncome`, `deleteTaxedIncome` |
 | `trips.ts` | `getTrips`, `getTripById`, `createTrip`, `updateTrip`, `deleteTrip` |
-| `user-preferences.ts` | `getUserPreferences`, `completeOnboarding`, `updateCategories`, `updateCheckInReminders`, `updateCheckInNotifications`, `updateBankAccountOrder`, `updateSplitGroupOrder`, `updateDisplayMode`, `updateTaxDefaults` |
+| `user-preferences.ts` | `getUserPreferences`, `completeOnboarding`, `updateCategories`, `updateCheckInReminders`, `updateCheckInNotifications`, `updateSplitNotificationPrefs` (five-key opt-out record for the split webhook events), `getSplitNotifyStatus` (is `HA_WEBHOOK_URL` configured), `updateBankAccountOrder`, `updateSplitGroupOrder`, `updateDisplayMode`, `updateTaxDefaults` |
 | `user-profiles.ts` | `getUserProfiles` — `{ id, name, avatarUrl? }` for any authenticated user (no email/role; safe for cross-user member displays) |
 
 Tax & contribution defaults (`UserPreferences.taxDefaults`) are **per-user** preferences
@@ -278,6 +278,11 @@ worker; `frame-ancestors 'none'`; plus `img-src`/`font-src`/`connect-src`/`base-
 per-account daily rate limits from `src/lib/bank/constants.ts`). No other daemons, queues, or
 cron exist. Bank-sync mechanics: [`bank-sync.md`](bank-sync.md).
 
+Split-activity Home Assistant webhook POSTs (`src/lib/split-notify.ts`) run
+**post-response** via `after()` from `next/server` — the codebase's only use of that
+hook — so the mutation returns before any outbound HTTP happens. Fire-and-forget: no
+retry, no queue. Contract and opt-outs: [`features.md`](features.md) §1.
+
 ## 12. PWA
 
 Installable PWA: `src/app/manifest.ts` (static manifest, `display: standalone`, theme
@@ -346,7 +351,10 @@ wraps components in ThemeProvider). ~50 test files:
   `taxed-income-utils`, `budget-utils`, `budget-csv`, `csv-utils`, `debt-utils`,
   `goal-utils`, `per-diem-utils`,
   `bank-utils`, `maintenance-utils`, `split-utils`, `split-draft`, `split-csv`,
-  `bank-split-match`, `data-transfer-utils`, `scenario-utils`, `chart-descriptions`
+  `split-notify` (pure payload builder + opt-out gate + the fire-and-forget transport
+  with a stubbed `fetch`; `notifySplitActivity` itself is out of scope — `after()`
+  needs a request scope), `bank-split-match`, `data-transfer-utils`, `scenario-utils`,
+  `chart-descriptions`
 - **Bank engine** (`src/lib/bank/*.test.ts`): `card-billing`, `dedup`, `mappers`,
   `reconcile-links`, `link-identity`, `apply-link-balances`, `scheduler`,
   `card-payment-match`, `repair-booking-dates`

@@ -11,6 +11,7 @@ User preferences, banking, and administration panel.
 ### General
 - Appearance: dark/light mode toggle (persisted via ThemeProvider)
 - **Reminders**: "Monthly check-in reminders" InputSwitch → `updateCheckInReminders` (`UserPreferences.checkInRemindersEnabled`, default on). Off hides the Overview check-in banner; the Overview header button, ⌘M, and the palette command remain. A sub-toggle "Also notify on this device" → `updateCheckInNotifications` (`checkInNotificationsEnabled`, default off, disabled while reminders are off) requests browser Notification permission on enable (denied ⇒ toast + revert) and drives the local check-in notification (`CheckinNotifier`, one per month via the service worker).
+- **Push notifications**: five InputSwitch rows (New/Edited/Deleted expenses, Settle-ups, Recurring expenses) → `updateSplitNotificationPrefs` (`UserPreferences.splitNotificationPrefs`, **opt-out** — absent key ⇒ on; the UI always sends the full five-key record). Optimistic toggle + toast, rollback on failure. `getSplitNotifyStatus()` gates an info `AlertBanner` when the server lacks `HA_WEBHOOK_URL` (toggles still save). Delivery itself is the split → Home Assistant webhook — see root AGENTS.md §Split and `docs/features.md` §1.
 - Keyboard shortcuts display: `Cmd+K` palette, `Cmd+I` add income, `Cmd+E` add expense, `Cmd+M` monthly check-in
 - Accounts management: open the accounts drawer to view/create/edit/archive cash accounts
 

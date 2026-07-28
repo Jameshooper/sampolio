@@ -6,9 +6,10 @@ import {
 } from '@/lib/db/user-preferences';
 import { getBankConnections } from '@/lib/db/bank-connections';
 import { cachedGetUserPreferences, cachedGetSplitGroupsForUser } from '@/lib/db/cached';
+import { getSplitNotifyConfig } from '@/lib/split-notify';
 import { updateTag } from 'next/cache';
 import { z } from 'zod';
-import type { ApiResponse, UserPreferences, TaxDefaults, DisplayMode } from '@/types';
+import type { ApiResponse, UserPreferences, TaxDefaults, DisplayMode, SplitNotifyEvent } from '@/types';
 
 export async function getUserPreferences(): Promise<ApiResponse<UserPreferences>> {
   try {
@@ -106,6 +107,51 @@ export async function updateCheckInNotifications(
     console.error('Update check-in notifications error:', error);
     return { success: false, error: 'Failed to update check-in notifications' };
   }
+}
+
+/**
+ * Per-event opt-out for the split push notifications. Every key is optional and
+ * `false` means "don't notify me"; an absent key stays enabled (see
+ * `isSplitNotifyEnabled`), so a partial record is always valid.
+ */
+const splitNotificationPrefsSchema = z.object({
+  'expense.created': z.boolean().optional(),
+  'expense.updated': z.boolean().optional(),
+  'expense.deleted': z.boolean().optional(),
+  'payment.recorded': z.boolean().optional(),
+  'expense.generated': z.boolean().optional(),
+});
+
+export async function updateSplitNotificationPrefs(
+  prefsInput: Partial<Record<SplitNotifyEvent, boolean>>
+): Promise<ApiResponse<UserPreferences>> {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return { success: false, error: 'Unauthorized' };
+    }
+    const parsed = splitNotificationPrefsSchema.safeParse(prefsInput);
+    if (!parsed.success) {
+      return { success: false, error: 'Invalid notification preferences' };
+    }
+    // The UI always sends all five keys, so replacing the object wholesale is
+    // the intended semantic (no per-key merge).
+    const prefs = await dbUpdateUserPreferences(session.user.id, {
+      splitNotificationPrefs: parsed.data,
+    });
+    updateTag(`user:${session.user.id}:preferences`);
+    return { success: true, data: prefs };
+  } catch (error) {
+    console.error('Update split notification prefs error:', error);
+    return { success: false, error: 'Failed to update notification preferences' };
+  }
+}
+
+/** Whether this server has the Home Assistant webhook configured (else the UI notes it). */
+export async function getSplitNotifyStatus(): Promise<ApiResponse<{ configured: boolean }>> {
+  const session = await auth();
+  if (!session?.user?.id) return { success: false, error: 'Unauthorized' };
+  return { success: true, data: { configured: getSplitNotifyConfig() !== null } };
 }
 
 const bankAccountOrderSchema = z.array(z.string().min(1)).max(200);

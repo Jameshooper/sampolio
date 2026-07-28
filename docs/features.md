@@ -282,6 +282,95 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
   `category-icon.tsx` maps categories to icons. Split categories are
   `SPLIT_CATEGORIES` in `src/lib/constants.ts` (mirrors Splitwise's set).
 
+### Home Assistant notifications
+
+Split mutations POST one JSON payload to a Home Assistant webhook, which fans it out
+to the recipients' phones (HA owns the delivery policy; Sampolio owns the payload).
+Engine: `src/lib/split-notify.ts` — a **plain server module, NOT `'use server'`**
+(synchronous exports, and the transport must never become a client-invokable
+endpoint). Emitted **post-response** through `after()` from `next/server` — the only
+use of that hook in the codebase — so a slow or dead Home Assistant can never fail or
+delay a save.
+
+**Configuration.** `getSplitNotifyConfig()` needs `HA_WEBHOOK_URL` (the full webhook
+URL, secret id included) **and** `AUTH_URL` (the deep-link base, trailing slash
+stripped). Either missing/blank ⇒ null ⇒ the feature is hard-disabled with **zero
+network calls**, mirroring `getBankConfig()`. See
+[`docs/operations.md`](operations.md) §9.
+
+**Events and their author.**
+
+| Event | Raised by | `author` |
+|---|---|---|
+| `expense.created` | `createSplitExpense`, `quickAddSplitExpense` | the acting member |
+| `expense.updated` | `updateSplitExpense` | the acting member |
+| `expense.deleted` | `deleteSplitExpense` | the acting member |
+| `payment.recorded` | `recordSettleUp` | the **recorder** (may differ from the payer) |
+| `expense.generated` | `catchUpGroupRecurrences` (one per generated row) | the **rule's payer** (matches the row's `createdByUserId`) |
+
+**Recipients and opt-out.** `recipients` = the group's members **minus the author**,
+minus anyone who turned that event off. Each entry is `{ id, name, email }` (the
+`author` object deliberately carries no email). The per-user opt-out lives in
+`UserPreferences.splitNotificationPrefs?: Partial<Record<SplitNotifyEvent, boolean>>`
+— **opt-out semantics**: an absent object, an absent key, or `true` all mean
+*notify me*; only an explicit `false` disables (`isSplitNotifyEnabled`). No migration
+was needed and new event types default to on. Preferences are read with the **plain**
+db read (not the `'use cache'` wrapper — `after()` runs outside a reliable cache
+scope). UI: Settings → General → **"Push notifications"** (both display modes) with
+five toggles — New expenses / Edited expenses / Deleted expenses / Settle-ups /
+Recurring expenses. `getSplitNotifyStatus()` tells the panel whether the server is
+configured; when it isn't, an info `AlertBanner` says so and the toggles still save.
+
+**Skip rules.** No POST at all when: the feature is unconfigured; `recipients` is
+empty (a solo group, or every other member opted out — `buildSplitWebhookPayload`
+returns `null`); or a **payment** row is deleted (`deleteSplitExpense` snapshots the
+row first and only notifies for `kind === 'expense'`).
+
+**Timeout & redaction.** One `fetch` per event, aborted after **5s**
+(`SPLIT_NOTIFY_TIMEOUT_MS`). `postSplitWebhook` never rejects: a non-2xx logs
+`Split webhook delivery failed ({event}): HTTP {status}`, a throw logs the event plus
+the error's `name`. The **webhook URL is never logged** (it embeds the secret webhook
+id) and neither is any payload content (names, emails, titles, amounts). Delivery is
+best-effort — no retry, no queue, no delivery log.
+
+**Payload contract.** `message` is prebuilt (fi-FI money via `formatCents`) so the HA
+automation needs no formatting logic; `url` deep-links to the group.
+
+```jsonc
+{
+  "event": "expense.created",          // one of the five above
+  "ts": "2026-03-04T10:20:30.000Z",   // ISO event timestamp
+  "message": "Alex added 'Groceries' — €42,50 in Flatmates",
+  "url": "https://money.example.com/split/g1",
+  "group":  { "id": "g1", "name": "Flatmates", "emoji": "🏠", "currency": "EUR" },
+  "author": { "id": "a1", "name": "Alex" },
+  "recipients": [
+    { "id": "s1", "name": "Sam", "email": "sam@example.com" },
+    { "id": "k1", "name": "Kim", "email": "kim@example.com" }
+  ],
+  // present for the four expense.* events only
+  "expense": {
+    "id": "e1", "title": "Groceries", "category": "Food",
+    "amountCents": 4250, "currency": "EUR",
+    "date": "2026-03-04", "source": "manual"   // 'recurring' for expense.generated
+  },
+  // present for payment.recorded only
+  "payment": { "fromUserId": "s1", "toUserId": "a1", "amountCents": 4250, "currency": "EUR" }
+}
+```
+
+Message shapes (single quotes around the title, em dash before the amount):
+
+- `expense.created` — `{Author} added '{title}' — {amount} in {group}`
+- `expense.updated` — `{Author} updated '{title}' — {amount} in {group}`
+- `expense.deleted` — `{Author} deleted '{title}' — {amount} in {group}`
+- `expense.generated` — `Recurring expense '{title}' — {amount} added in {group} (paid by {payer})`
+- `payment.recorded` — `{Payer} paid {Payee} {amount} in {group}`, plus
+  ` (recorded by {Author})` **only** when a third member logged it
+
+An unknown member id renders as `Someone`. The pure builder + opt-out gate +
+transport are unit-tested in `src/lib/split-notify.test.ts`.
+
 ## 2. Budgets (trip/project budgets with grant funding)
 
 ### Storage & access

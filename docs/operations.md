@@ -129,10 +129,13 @@ every gate passes; never restart if any of them fails. `server-deploy.sh` (§7) 
 the scripted form of this sequence.
 
 - **Code-only deploy:** `launchctl kickstart -k gui/$(id -u)/com.sampolio.app`.
-- **After changing plist env vars** (e.g. adding `ENABLE_BANKING_*`): `kickstart`
-  reuses the loaded job and does **not** re-read the plist — do a **full reload**
-  once: `launchctl bootout gui/$(id -u)/com.sampolio.app` then
+- **After changing plist env vars** (e.g. adding `ENABLE_BANKING_*` or
+  `HA_WEBHOOK_URL` — see §9): `kickstart` reuses the loaded job and does **not**
+  re-read the plist — do a **full reload** once:
+  `launchctl bootout gui/$(id -u)/com.sampolio.app` then
   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sampolio.app.plist`.
+  Until that reload the new variable is absent, so the feature it gates (bank
+  sync, split notifications) stays hard-disabled and silently does nothing.
 - **Health checks:** `curl -sS -o /dev/null -w '%{http_code}' http://localhost:3999/`
   (expect `307`); `launchctl list | grep com.sampolio.app`;
   `curl -skI https://<your-domain>/ | head -1` (expect `307`).
@@ -215,6 +218,7 @@ Every variable the code reads (`grep -r "process.env" src scripts next.config.ts
 | `ENABLE_BANKING_PRIVATE_KEY_FILE` | bank sync only | `lib/bank/jwt.ts` | Path to the 0600 RS256 PKCS#8 PEM (outside the repo). |
 | `ENABLE_BANKING_BASE_URL` | no | `lib/bank/constants.ts` | API base override (sandbox); unset in prod. |
 | `BANK_SYNC_VERBOSE` | no | `lib/bank/` | `1/true/yes` → verbose sync logging. |
+| `HA_WEBHOOK_URL` | no | `lib/split-notify.ts` | Full Home Assistant webhook URL **including the secret webhook id** (e.g. `https://<ha-host>/api/webhook/<id>`) that split-activity notifications are POSTed to. Missing/blank ⇒ the feature hard-disables (zero network calls); `AUTH_URL` doubles as the deep-link base and must also be set. Never logged. |
 | `NODE_ENV` / `NEXT_RUNTIME` | set by Next | various | Standard runtime flags (e.g. service-worker registration is production-only; the bank scheduler starts only on the Node runtime). |
 
 ## 10. Dev workflow against a copy of production data

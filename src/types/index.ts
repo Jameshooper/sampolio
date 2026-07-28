@@ -97,6 +97,11 @@ export interface UserPreferences {
   // check-in is due. Opt-in (undefined ⇒ disabled); requires the browser's
   // Notification permission and only applies while reminders are enabled.
   checkInNotificationsEnabled?: boolean;
+  // Per-event opt-out for the split-activity push notifications delivered via
+  // the Home Assistant webhook (see src/lib/split-notify.ts). Opt-OUT
+  // semantics: an absent object — or an absent key — means enabled, so no
+  // migration is needed and new events default to on.
+  splitNotificationPrefs?: Partial<Record<SplitNotifyEvent, boolean>>;
   // User-curated display order of connected bank accounts (BankAccountLink ids)
   // on the Bank page. Ids not present keep insertion order after the ordered
   // ones; stale ids are ignored. Undefined ⇒ default (connection) order.
@@ -1762,6 +1767,18 @@ export interface SplitMemberBalance {
   name: string;
   netCents: number; // >0 owed to them, <0 they owe
 }
+
+/**
+ * Split mutations that can raise a push notification (Home Assistant webhook —
+ * see src/lib/split-notify.ts). Also the key space of
+ * `UserPreferences.splitNotificationPrefs` (opt-out; absent ⇒ enabled).
+ */
+export type SplitNotifyEvent =
+  | 'expense.created'
+  | 'expense.updated'
+  | 'expense.deleted'
+  | 'payment.recorded'
+  | 'expense.generated';
 
 /** Lightweight cross-group projection used by the bank ledger's "already split" matching. */
 export interface SplitLinkCandidate {

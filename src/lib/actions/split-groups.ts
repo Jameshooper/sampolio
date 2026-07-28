@@ -40,6 +40,7 @@ import {
   guessCategory,
 } from '@/lib/split-utils';
 import { monthsWindow, computeSplitInsights, type SplitInsights, type SplitInsightsGroupInput } from '@/lib/split-insights';
+import { notifySplitActivity } from '@/lib/split-notify';
 import { buildNetByUserId, paymentParties } from '@/lib/split-csv';
 import {
   createSplitGroupSchema,
@@ -559,6 +560,7 @@ export async function createSplitExpense(
     const row = buildExpenseRow(loaded.group, validated, loaded.userId, 'manual', { bankLink });
     await withGroupLock(groupId, () => dbAddExpense(groupId, row));
     invalidateGroup(loaded.group);
+    notifySplitActivity({ event: 'expense.created', group: loaded.group, authorUserId: loaded.userId, expense: row });
     return { success: true, data: row };
   } catch (error) {
     if (error instanceof z.ZodError) return { success: false, error: error.issues[0]?.message ?? 'Validation error' };
@@ -589,6 +591,7 @@ export async function quickAddSplitExpense(
     );
     await withGroupLock(groupId, () => dbAddExpense(groupId, row));
     invalidateGroup(loaded.group);
+    notifySplitActivity({ event: 'expense.created', group: loaded.group, authorUserId: loaded.userId, expense: row });
     return { success: true, data: row };
   } catch (error) {
     if (error instanceof z.ZodError) return { success: false, error: error.issues[0]?.message ?? 'Validation error' };
@@ -621,6 +624,13 @@ export async function updateSplitExpense(
     const saved = await withGroupLock(groupId, () => dbUpdateExpense(groupId, expenseId, next));
     if (!saved) return { success: false, error: 'Expense not found' };
     invalidateGroup(loaded.group);
+    notifySplitActivity({
+      event: 'expense.updated',
+      group: loaded.group,
+      authorUserId: loaded.userId,
+      // `saved` is the row we just wrote (`next`), so it is always an expense.
+      expense: saved.kind === 'expense' ? saved : next,
+    });
     return { success: true, data: saved };
   } catch (error) {
     if (error instanceof z.ZodError) return { success: false, error: error.issues[0]?.message ?? 'Validation error' };
@@ -632,9 +642,16 @@ export async function updateSplitExpense(
 export async function deleteSplitExpense(groupId: string, expenseId: string): Promise<ApiResponse<void>> {
   const loaded = await loadGroupForMember(groupId);
   if (!loaded.ok) return { success: false, error: loaded.error };
+  // Snapshot the row BEFORE deleting it — the notification needs its title and
+  // amount, and the db delete only reports success. Payment rows are deleted
+  // through this same action and deliberately notify nothing.
+  const snapshot = await dbGetExpenseById(groupId, expenseId);
   const ok = await withGroupLock(groupId, () => dbDeleteExpense(groupId, expenseId));
   if (!ok) return { success: false, error: 'Expense not found' };
   invalidateGroup(loaded.group);
+  if (snapshot && snapshot.kind === 'expense') {
+    notifySplitActivity({ event: 'expense.deleted', group: loaded.group, authorUserId: loaded.userId, expense: snapshot });
+  }
   return { success: true };
 }
 
@@ -669,6 +686,7 @@ export async function recordSettleUp(
     };
     await withGroupLock(groupId, () => dbAddExpense(groupId, payment));
     invalidateGroup(loaded.group);
+    notifySplitActivity({ event: 'payment.recorded', group: loaded.group, authorUserId: loaded.userId, payment });
     return { success: true, data: payment };
   } catch (error) {
     if (error instanceof z.ZodError) return { success: false, error: error.issues[0]?.message ?? 'Validation error' };
@@ -790,6 +808,9 @@ export async function catchUpGroupRecurrences(groupId: string): Promise<ApiRespo
           );
           await dbUpsertOccurrence(groupId, row);
           generated++;
+          // Safe inside withGroupLock: notifySplitActivity only *schedules* the
+          // POST (Next's after()), which runs once the response is out.
+          notifySplitActivity({ event: 'expense.generated', group, authorUserId: rule.split.paidByUserId, expense: row });
         }
         const last = dates[dates.length - 1];
         const cursor = !rule.lastGeneratedThrough || last > rule.lastGeneratedThrough ? last : rule.lastGeneratedThrough;

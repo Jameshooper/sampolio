@@ -161,7 +161,9 @@ cat > "$PLIST_FILE" << EOF
         <key>ENABLE_BANKING_PRIVATE_KEY_FILE</key>
         <string>${ENABLE_BANKING_PRIVATE_KEY_FILE}</string>}${ENABLE_BANKING_BASE_URL:+
         <key>ENABLE_BANKING_BASE_URL</key>
-        <string>${ENABLE_BANKING_BASE_URL}</string>}${AUTH_URL:+
+        <string>${ENABLE_BANKING_BASE_URL}</string>}${HA_WEBHOOK_URL:+
+        <key>HA_WEBHOOK_URL</key>
+        <string>${HA_WEBHOOK_URL}</string>}${AUTH_URL:+
         <key>AUTH_URL</key>
         <string>${AUTH_URL}</string>}
     </dict>

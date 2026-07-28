@@ -19,7 +19,8 @@ import { useTheme } from '@/components/providers/theme-provider';
 import { useAppContext } from '@/components/layout/app-layout';
 import { useToast } from '@/components/providers/toast-provider';
 import { getSettings, updateSettings, revalidateAllCaches } from '@/lib/actions/admin';
-import { getUserPreferences, updateCategories, updateTaxDefaults, updateCheckInReminders, updateCheckInNotifications } from '@/lib/actions/user-preferences';
+import { getUserPreferences, updateCategories, updateTaxDefaults, updateCheckInReminders, updateCheckInNotifications, updateSplitNotificationPrefs, getSplitNotifyStatus } from '@/lib/actions/user-preferences';
+import { AlertBanner } from '@/components/ui/alert-banner';
 import { getAppVersion } from '@/lib/actions/app-info';
 import { previewHistoryCompaction, compactHistory, type HistoryCompactionStats } from '@/lib/actions/maintenance';
 import { exportUserData, importUserData } from '@/lib/actions/data-transfer';
@@ -38,9 +39,18 @@ const AccountPanel = dynamic(
     () => import('@/components/settings/account-panel').then((m) => m.AccountPanel),
     { ssr: false, loading: () => <DelayedSpinner /> }
 );
-import type { TaxDefaults } from '@/types';
+import type { TaxDefaults, SplitNotifyEvent } from '@/types';
 import { MdDownload, MdUpload, MdAccountBalanceWallet, MdAdd, MdCheck, MdGroup, MdCached, MdStorage, MdDeleteSweep } from 'react-icons/md';
 import { FaGithub } from 'react-icons/fa';
+
+/** Split push-notification events, in the order the Settings block lists them. */
+const SPLIT_NOTIFY_TOGGLES: { key: SplitNotifyEvent; label: string }[] = [
+    { key: 'expense.created', label: 'New expenses' },
+    { key: 'expense.updated', label: 'Edited expenses' },
+    { key: 'expense.deleted', label: 'Deleted expenses' },
+    { key: 'payment.recorded', label: 'Settle-ups' },
+    { key: 'expense.generated', label: 'Recurring expenses' },
+];
 
 function SettingsPageInner() {
     const { data: session } = useSession();
@@ -73,6 +83,13 @@ function SettingsPageInner() {
     const [checkInReminders, setCheckInReminders] = useState(true);
     // Opt-in local device notification when the check-in is due (default off)
     const [checkInNotifications, setCheckInNotifications] = useState(false);
+
+    // Split push notifications (Home Assistant webhook). Opt-OUT: an absent key
+    // means enabled, so {} = everything on.
+    const [splitNotifyPrefs, setSplitNotifyPrefs] = useState<Partial<Record<SplitNotifyEvent, boolean>>>({});
+    // Assume configured until told otherwise, so the "not configured" note never
+    // flashes on load.
+    const [splitNotifyConfigured, setSplitNotifyConfigured] = useState(true);
 
     // App version
     const [appVersion, setAppVersion] = useState<string>('');
@@ -122,6 +139,13 @@ function SettingsPageInner() {
                 }
                 setCheckInReminders(result.data.checkInRemindersEnabled !== false);
                 setCheckInNotifications(result.data.checkInNotificationsEnabled === true);
+                setSplitNotifyPrefs(result.data.splitNotificationPrefs ?? {});
+            }
+        }
+        async function loadSplitNotifyStatus() {
+            const result = await getSplitNotifyStatus();
+            if (result.success && result.data) {
+                setSplitNotifyConfigured(result.data.configured);
             }
         }
         async function loadAppInfo() {
@@ -132,6 +156,7 @@ function SettingsPageInner() {
         }
         loadSettings();
         loadPreferences();
+        loadSplitNotifyStatus();
         loadAppInfo();
     }, [isAdmin]);
 
@@ -408,6 +433,53 @@ function SettingsPageInner() {
                         }
                     }}
                 />
+            </div>
+        </Card>
+    );
+
+    // Opt-out toggles are sent as a full five-key record, so a stale absent key
+    // can never re-enable something the user just turned off.
+    const handleSplitNotifyToggle = async (key: SplitNotifyEvent, label: string, enabled: boolean) => {
+        const previous = splitNotifyPrefs;
+        const next: Partial<Record<SplitNotifyEvent, boolean>> = {};
+        for (const t of SPLIT_NOTIFY_TOGGLES) {
+            next[t.key] = t.key === key ? enabled : previous[t.key] !== false;
+        }
+        setSplitNotifyPrefs(next);
+        const result = await updateSplitNotificationPrefs(next);
+        if (result.success) {
+            toast.success(`${label} ${enabled ? 'on' : 'off'}`);
+        } else {
+            setSplitNotifyPrefs(previous);
+            toast.error('Error', result.error || 'Failed to save preference');
+        }
+    };
+
+    const pushNotificationsCard = (
+        <Card>
+            <h2 className={heading}>Push notifications</h2>
+            <p className={`text-sm mb-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                Split activity delivered to your phone via Home Assistant. Applies to all your
+                split groups — and you are never notified about your own changes.
+            </p>
+            {!splitNotifyConfigured && (
+                <AlertBanner severity="info" icon="ℹ️" className="mb-4">
+                    Notifications aren&apos;t configured on this server (<code>HA_WEBHOOK_URL</code>).
+                    Your preferences still save and will apply once it is.
+                </AlertBanner>
+            )}
+            <div className="divide-y divide-gray-200/40 dark:divide-gray-700/40">
+                {SPLIT_NOTIFY_TOGGLES.map(({ key, label }) => (
+                    <div key={key} className="flex items-center justify-between gap-4 min-h-11 py-2">
+                        <span className={`min-w-0 flex-1 ${isDark ? 'text-gray-200' : 'text-gray-700'}`}>{label}</span>
+                        <InputSwitch
+                            className="shrink-0"
+                            aria-label={label}
+                            checked={splitNotifyPrefs[key] !== false}
+                            onChange={(e) => handleSplitNotifyToggle(key, label, e.value ?? false)}
+                        />
+                    </div>
+                ))}
             </div>
         </Card>
     );
@@ -849,6 +921,7 @@ function SettingsPageInner() {
                         {displayModeCard}
                         {appearanceCard}
                         {remindersCard}
+                        {pushNotificationsCard}
                         {shortcutsCard}
                     </div>
                 </TabPanel>
