@@ -695,7 +695,9 @@ export default function SplitGroupDetailPage() {
                       </div>
                       <CategoryIcon category={isPayment ? 'Payment' : (e as SplitExpenseItem).category} size={40} />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-gray-900 dark:text-gray-100">
+                        {/* line-clamp-2, not truncate: long merchant names (common on
+                            bank-imported rows) stay readable by wrapping to a second line. */}
+                        <div className="line-clamp-2 text-gray-900 dark:text-gray-100">
                           {newIds.has(e.id) && (
                             <span
                               className="inline-block w-2 h-2 mr-1.5 rounded-full align-middle shrink-0 bg-[var(--primary-color)]"
@@ -710,10 +712,11 @@ export default function SplitGroupDetailPage() {
                         <div className="truncate text-xs text-gray-400">{sub}</div>
                       </div>
                       <div className="text-right shrink-0">
-                        {viewerNet > 0 ? (
-                          <div className="text-sm text-green-600 dark:text-green-400">you lent {formatCents(viewerNet, group.currency)}</div>
-                        ) : viewerNet < 0 ? (
-                          <div className="text-sm text-orange-600 dark:text-orange-400">you borrowed {formatCents(-viewerNet, group.currency)}</div>
+                        {viewerNet !== 0 ? (
+                          <div className={viewerNet > 0 ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}>
+                            <div className="text-xs">{viewerNet > 0 ? 'you lent' : 'you borrowed'}</div>
+                            <div className="text-sm font-medium tabular-nums">{formatCents(Math.abs(viewerNet), group.currency)}</div>
+                          </div>
                         ) : (
                           <div className="text-sm text-gray-400">—</div>
                         )}

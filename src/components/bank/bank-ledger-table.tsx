@@ -102,8 +102,13 @@ function SplitFlag({ match, txDate }: { match: BankSplitMatch; txDate: string })
  * scrollable, paginated PrimeReact DataTable with expandable detail rows.
  * Mobile: month-grouped sections with sticky headers + "Load older months"
  * (the split ledger pattern) so one account can't inflate the page to
- * thousands of pixels. Both views share a counterparty/amount search box and
- * an "already split" flag from `splitMatches` (see src/lib/bank-split-match.ts). */
+ * thousands of pixels. Each mobile row is a whole-row `role="button"` `<li>`
+ * (the split detail page's pattern) that toggles its own expansion — the flag
+ * pill and "Split this" button sit BETWEEN the title and the amount (both
+ * stop click propagation) so the amount + chevron form a constant-width right
+ * rail and every row's amount right-aligns at the same x-position. Both views
+ * share a counterparty/amount search box and an "already split" flag from
+ * `splitMatches` (see src/lib/bank-split-match.ts). */
 export function BankLedgerTable({
   transactions,
   currency,
@@ -494,59 +499,65 @@ export function BankLedgerTable({
                 const remittanceLine = t.remittanceInfo?.split('\n')[0];
                 const hasLine2 = !!remittanceLine && remittanceLine !== displayTitle;
                 return (
-                  <li key={t.id} className={`flex flex-wrap items-stretch bank-tx-row-${t.id}`}>
-                    <button
-                      type="button"
-                      onClick={() => setExpandedMobile((m) => ({ ...m, [t.id]: !m[t.id] }))}
-                      className="flex-1 min-h-[44px] min-w-0 px-2 py-1.5 text-left"
-                      aria-expanded={open}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="w-10 shrink-0 tabular-nums text-xs opacity-60">{fmtDateShort(txDisplayDate(t))}</span>
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${statusDotClass(t.status)}`}
-                          title={STATUS_TIP[t.status]}
-                        >
-                          <span className="sr-only">{t.status}</span>
-                        </span>
-                        <span className="truncate flex-1 text-sm font-medium">{displayTitle}</span>
-                        <span
-                          className={`shrink-0 tabular-nums text-sm font-medium ${t.amount < 0 ? 'text-red-500' : 'text-green-600'}`}
-                        >
-                          {formatCurrency(t.amount, currency)}
-                        </span>
-                        <MdExpandMore
-                          className={`shrink-0 opacity-50 transition-transform ${open ? 'rotate-180' : ''}`}
-                        />
-                      </div>
-                      {hasLine2 && (
-                        <div className="flex items-center gap-2 mt-0.5 pl-12">
-                          <span className="truncate text-xs opacity-60 flex-1">{remittanceLine}</span>
-                        </div>
-                      )}
-                    </button>
-                    {/* The flag is a real <button>, so it must be a SIBLING of the
-                        expand button (nested buttons are invalid HTML and break
-                        hydration), not inline with the row text. */}
-                    {match && (
-                      <span className="self-center shrink-0">
-                        <SplitFlag match={match} txDate={txDisplayDate(t)} />
+                  <li
+                    key={t.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={open}
+                    onClick={() => setExpandedMobile((m) => ({ ...m, [t.id]: !m[t.id] }))}
+                    onKeyDown={(ev) => {
+                      // Only toggle for keys pressed on the row itself — Enter on a button
+                      // inside the expanded panel bubbles its keydown up here otherwise.
+                      if (ev.target !== ev.currentTarget) return;
+                      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+                      ev.preventDefault();
+                      setExpandedMobile((m) => ({ ...m, [t.id]: !m[t.id] }));
+                    }}
+                    className={`flex flex-wrap items-center min-h-[44px] px-2 py-1.5 cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 active:bg-gray-100 dark:active:bg-gray-700/70 bank-tx-row-${t.id}`}
+                  >
+                    <div className="flex w-full min-w-0 items-center gap-2">
+                      <span className="w-10 shrink-0 tabular-nums text-xs opacity-60">{fmtDateShort(txDisplayDate(t))}</span>
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${statusDotClass(t.status)}`}
+                        title={STATUS_TIP[t.status]}
+                      >
+                        <span className="sr-only">{t.status}</span>
                       </span>
+                      <span className="truncate flex-1 text-sm font-medium">{displayTitle}</span>
+                      {/* Variable-width extras (flag pill, Split-this) sit BETWEEN the title
+                          and the amount so the amount + chevron form a constant-width right
+                          rail — amounts stay right-aligned across every row. */}
+                      {match && <SplitFlag match={match} txDate={txDisplayDate(t)} />}
+                      {t.amount < 0 && (
+                        <Button
+                          icon={<MdCallSplit />}
+                          text
+                          size="small"
+                          className="!min-w-11 !w-11 shrink-0"
+                          aria-label="Split this"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openSplitFor(t);
+                          }}
+                        />
+                      )}
+                      <span
+                        className={`shrink-0 text-right tabular-nums text-sm font-medium ${t.amount < 0 ? 'text-red-500' : 'text-green-600'}`}
+                      >
+                        {formatCurrency(t.amount, currency)}
+                      </span>
+                      <MdExpandMore className={`shrink-0 opacity-50 transition-transform ${open ? 'rotate-180' : ''}`} />
+                    </div>
+                    {hasLine2 && (
+                      <div className="w-full mt-0.5 pl-12">
+                        <span className="block truncate text-xs opacity-60">{remittanceLine}</span>
+                      </div>
                     )}
-                    {t.amount < 0 && (
-                      <Button
-                        icon={<MdCallSplit />}
-                        text
-                        size="small"
-                        className="!min-w-11 !w-11 shrink-0"
-                        aria-label="Split this"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openSplitFor(t);
-                        }}
-                      />
+                    {open && (
+                      <div className="basis-full cursor-auto" onClick={(ev) => ev.stopPropagation()}>
+                        {rowExpansion(t)}
+                      </div>
                     )}
-                    {open && <div className="basis-full">{rowExpansion(t)}</div>}
                   </li>
                 );
               })}

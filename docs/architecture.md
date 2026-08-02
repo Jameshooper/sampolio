@@ -42,7 +42,7 @@ runbook: [`operations.md`](operations.md).
 
 | Route | File | Purpose |
 |---|---|---|
-| `/` | `src/app/page.tsx` | Home dashboard (quick-add, split balances, activity). Server component: `auth()` + `redirect('/auth/signin')`; wraps `AppLayout` itself (outside the route group). |
+| `/` | `src/app/page.tsx` | Home dashboard (glance, split balances, activity; add via the global FAB). Server component: `auth()` + `redirect('/auth/signin')`; wraps `AppLayout` itself (outside the route group). |
 | `/overview` | `src/app/(dashboard)/overview/page.tsx` | Wealth dashboard (net worth, KPIs, reminders). |
 | `/cashflow` | `src/app/(dashboard)/cashflow/page.tsx` | Monthly cash-flow projection + retrospective. |
 | `/mortgage` | `src/app/(dashboard)/mortgage/page.tsx` | Shared-mortgage ledger, charts, reconcile/import. |
@@ -305,7 +305,7 @@ any deploy that changes cached assets. Responsive/PWA UI rules: root `AGENTS.md`
 | `providers/` | `PrimeProvider`, `ThemeProvider`, `ToastProvider`, `CelebrationProvider`, `ServiceWorkerRegister` |
 | `charts/` | ECharts/Chart.js components (cashflow waterfall, treemap, monthly flow, net-worth, wealth, scenario comparison) |
 | `modals/` | Cashflow item modal, occurrence-override dialog, users (admin) modal |
-| `home/` | `HomeDashboard` (quick-add card, split balances, activity feed) |
+| `home/` | `HomeDashboard` (glance tile, split balances, activity feed) |
 | `bank/` | Connections settings panel, account picker, transaction ledger table, account-order dialog |
 | `cashflow/` | Collapsing header, month strip, month-details panel, projection table |
 | `overview/` | `BannerStack`, `KpiGroup`, forecast-vs-actual card, net-worth explain dialog |

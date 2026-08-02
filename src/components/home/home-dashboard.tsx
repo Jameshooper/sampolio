@@ -4,12 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Button } from 'primereact/button';
 import { Dialog } from 'primereact/dialog';
-import { MdAdd, MdChevronRight } from 'react-icons/md';
+import { MdChevronRight } from 'react-icons/md';
 import { useAppContext } from '@/components/layout/app-layout';
 import { navItems } from '@/components/layout/nav-config';
-import { HomeGlanceSkeleton, HomeFeedSkeleton } from '@/components/ui/skeletons';
+import { HomeSkeleton } from '@/components/ui/skeletons';
 import { PageEntrance } from '@/components/ui/page-entrance';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import { useUserProfiles } from '@/lib/hooks/use-user-profiles';
@@ -101,7 +100,7 @@ export function HomeDashboard() {
     );
     setLines(built);
     if (groups[0]) setCurrency(groups[0].currency);
-    const act = await getSplitActivity(15);
+    const act = await getSplitActivity(5);
     if (act.success && act.data) setEvents(act.data);
     setLoaded(true);
   }, [myId, fetchGlance, fetchBankAttention]);
@@ -143,7 +142,7 @@ export function HomeDashboard() {
         </div>
       )}
 
-      {!regionLoaded && <HomeGlanceSkeleton />}
+      {!regionLoaded && <HomeSkeleton />}
 
       {regionLoaded && (
         <div className="animate-fade-in">
@@ -223,27 +222,7 @@ export function HomeDashboard() {
               </div>
             </Dialog>
           )}
-        </div>
-      )}
 
-      {/* Quick add — the hot path */}
-      <div className="rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4 mb-5 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-semibold text-green-800 dark:text-green-200">Add a shared expense</div>
-          <div className="text-sm text-green-700/70 dark:text-green-300/70">Type a title and an amount — done.</div>
-        </div>
-        <Button
-          label="Add"
-          icon={<MdAdd />}
-          severity="success"
-          onClick={() => appContext?.openDrawer({ mode: 'create', entityType: 'split-expense' })}
-        />
-      </div>
-
-      {!regionLoaded && <HomeFeedSkeleton />}
-
-      {regionLoaded && (
-        <div className="animate-fade-in">
           {/* Split balances */}
           {lines.length > 0 && (
             <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 mb-5">

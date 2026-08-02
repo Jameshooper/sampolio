@@ -230,7 +230,10 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
   opens the edit dialog, a payment row opens its row menu, and trailing action buttons
   `stopPropagation`. Each expense row's subtitle reads
   `"{Payer} paid {amount} · added by {Adder}"` with **first names** ('You' for self); a
-  `paidBy`-less imported row omits the payer segment. Rows show member `<UserAvatar>`s,
+  `paidBy`-less imported row omits the payer segment. The trailing net indicator is a
+**stacked** label-over-amount block ("you lent" / "you borrowed" at `text-xs` above the
+`tabular-nums` amount — zero net stays a single "—"), and titles `line-clamp-2` instead
+of truncating, so long merchant names stay readable on a phone. Rows show member `<UserAvatar>`s,
   and the page applies optimistic UI on delete / rule pause-resume. A row with a
   `bankLink` shows a bank icon (see "Bank-transaction linking" above); `?expense=&month=`
   deep-links to a row (extends `visibleCount` to reach the month, then scroll +
@@ -721,11 +724,11 @@ computation rather than a pool claim.
   (fetched independently so it never blocks the split data). Tapping it opens a
   **plain-words breakdown dialog** (starting balance + income − spending = expected
   end balance, with an Overview link inside);
-- a greeting + **quick-add card** (opens the global `split-expense` drawer — the
-  daily-driver hot path);
+- a greeting (adding a shared expense happens via the global quick-add FAB — see
+  §1 — which is always visible on Home);
 - **split balances**: per-group net for the logged-in user (via `getSplitGroupView`)
   plus the overall net;
-- **cross-group activity**: `getSplitActivity(15)` (reads only each group's newest ~3
+- **cross-group activity**: `getSplitActivity(5)` (reads only each group's newest ~3
   month chunks) rendered by `SplitActivityFeed`, showing each actor's `<UserAvatar>` and
   `added by {actorName}` ("added by You" for own rows); clicking an event navigates to
   its group;

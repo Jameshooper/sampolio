@@ -10,8 +10,8 @@ import { DelayedSkeleton } from './delayed-loading';
  * "the page is here, loading" far better than a lone centered spinner.
  *
  * Available: KpiGridSkeleton (Overview), ChartsPageSkeleton (Cashflow/Mortgage),
- * ListPageSkeleton (Split/Budgets/Bank lists), HomeGlanceSkeleton + HomeFeedSkeleton
- * (Home dashboard's two regions — see below), SplitDetailSkeleton (Split group detail).
+ * ListPageSkeleton (Split/Budgets/Bank lists), HomeSkeleton (Home dashboard),
+ * SplitDetailSkeleton (Split group detail).
  */
 
 /** Overview: title + KPI tiles + a chart block. */
@@ -68,28 +68,15 @@ export function ListPageSkeleton({ rows = 5, showTitle = true }: { rows?: number
 }
 
 /**
- * Home dashboard, region A (above the always-mounted "Quick add" card): the
- * glance tile alone. Split from the feed skeleton below so the Quick-add card
- * stays at (almost exactly) the same vertical position while loading as it
- * does once content has loaded — a single contiguous skeleton block covering
- * both regions used to push Quick-add ~19rem down during load.
+ * Home dashboard: glance tile + split-balances card + a few activity rows.
+ * (Was two skeletons split around an always-mounted quick-add card; the card
+ * was removed in favor of the global FAB, so one contiguous block is correct.)
  */
-export function HomeGlanceSkeleton() {
-  return (
-    <DelayedSkeleton>
-      <Skeleton height="6rem" borderRadius="0.75rem" className="mb-5 w-full" />
-    </DelayedSkeleton>
-  );
-}
-
-/**
- * Home dashboard, region B (below the "Quick add" card): the split-balances
- * card + a few activity rows.
- */
-export function HomeFeedSkeleton() {
+export function HomeSkeleton() {
   return (
     <DelayedSkeleton>
       <div className="w-full">
+        <Skeleton height="6rem" borderRadius="0.75rem" className="mb-5 w-full" />
         <Skeleton height="9rem" borderRadius="0.75rem" className="mb-5 w-full" />
         <div className="flex flex-col gap-2">
           {Array.from({ length: 3 }).map((_, i) => (
