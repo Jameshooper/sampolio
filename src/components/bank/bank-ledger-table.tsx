@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { format, parseISO } from 'date-fns';
 import { DataTable, type DataTableExpandedRows, type DataTableValueArray } from 'primereact/datatable';
 import { Column } from 'primereact/column';
 import { Tag } from 'primereact/tag';
@@ -41,15 +42,6 @@ function fmtDateTime(value: string): { date: string; time: string | null } {
   const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   const time = hasTime ? d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : null;
   return { date, time };
-}
-
-/** Fixed-width 'dd.MM' for the compact mobile row (vs. the fuller `fmtDateTime`
- * used in the expanded detail / desktop columns). */
-function fmtDateShort(value: string): string {
-  const hasTime = value.length > 10 || value.includes('T');
-  const d = new Date(hasTime ? value : `${value}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return value.slice(5, 10).replace('-', '.');
-  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 /** How many month sections the mobile list shows initially / adds per load. */
@@ -103,10 +95,14 @@ function SplitFlag({ match, txDate }: { match: BankSplitMatch; txDate: string })
  * Mobile: month-grouped sections with sticky headers + "Load older months"
  * (the split ledger pattern) so one account can't inflate the page to
  * thousands of pixels. Each mobile row is a whole-row `role="button"` `<li>`
- * (the split detail page's pattern) that toggles its own expansion — the flag
- * pill and "Split this" button sit BETWEEN the title and the amount (both
- * stop click propagation) so the amount + chevron form a constant-width right
- * rail and every row's amount right-aligns at the same x-position. Both views
+ * (the split detail page's pattern) that toggles its own expansion. The row
+ * leads with a stacked date column (month initials over day number, matching
+ * the split detail rows), then a single title+remittance text column so a
+ * second remittance line adds height only to that column, never to the
+ * button-bearing first line. The flag pill and "Split this" button sit
+ * BETWEEN that text column and the amount (both stop click propagation) so
+ * the amount + chevron form a constant-width right rail and every row's
+ * amount right-aligns at the same x-position. Both views
  * share a counterparty/amount search box and an "already split" flag from
  * `splitMatches` (see src/lib/bank-split-match.ts). */
 export function BankLedgerTable({
@@ -516,24 +512,40 @@ export function BankLedgerTable({
                     className={`flex flex-wrap items-center min-h-[44px] px-2 py-1.5 cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 active:bg-gray-100 dark:active:bg-gray-700/70 bank-tx-row-${t.id}`}
                   >
                     <div className="flex w-full min-w-0 items-center gap-2">
-                      <span className="w-10 shrink-0 tabular-nums text-xs opacity-60">{fmtDateShort(txDisplayDate(t))}</span>
-                      <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${statusDotClass(t.status)}`}
-                        title={STATUS_TIP[t.status]}
-                      >
-                        <span className="sr-only">{t.status}</span>
-                      </span>
-                      <span className="truncate flex-1 text-sm font-medium">{displayTitle}</span>
-                      {/* Variable-width extras (flag pill, Split-this) sit BETWEEN the title
-                          and the amount so the amount + chevron form a constant-width right
-                          rail — amounts stay right-aligned across every row. */}
+                      {/* Stacked date column — same style as the split detail rows */}
+                      <div className="w-9 shrink-0 text-center">
+                        <div className="text-[11px] uppercase tracking-wide text-gray-400 leading-tight">
+                          {format(parseISO(txDisplayDate(t)), 'MMM')}
+                        </div>
+                        <div className="text-base font-medium text-gray-500 dark:text-gray-400 leading-tight">
+                          {format(parseISO(txDisplayDate(t)), 'd')}
+                        </div>
+                      </div>
+                      {/* Title + optional remittance share one column so the trailing
+                          buttons center across both lines instead of inflating line 1. */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${statusDotClass(t.status)}`}
+                            title={STATUS_TIP[t.status]}
+                          >
+                            <span className="sr-only">{t.status}</span>
+                          </span>
+                          <span className="truncate text-sm font-medium leading-snug">{displayTitle}</span>
+                        </div>
+                        {hasLine2 && (
+                          <div className="truncate text-xs opacity-60 leading-snug pl-4">{remittanceLine}</div>
+                        )}
+                      </div>
+                      {/* Variable-width extras stay BETWEEN the text and the amount so the
+                          amount + chevron remain a constant-width right rail (aligned amounts). */}
                       {match && <SplitFlag match={match} txDate={txDisplayDate(t)} />}
                       {t.amount < 0 && (
                         <Button
                           icon={<MdCallSplit />}
                           text
                           size="small"
-                          className="!min-w-11 !w-11 shrink-0"
+                          className="!w-9 !h-9 shrink-0"
                           aria-label="Split this"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -548,11 +560,6 @@ export function BankLedgerTable({
                       </span>
                       <MdExpandMore className={`shrink-0 opacity-50 transition-transform ${open ? 'rotate-180' : ''}`} />
                     </div>
-                    {hasLine2 && (
-                      <div className="w-full mt-0.5 pl-12">
-                        <span className="block truncate text-xs opacity-60">{remittanceLine}</span>
-                      </div>
-                    )}
                     {open && (
                       <div className="basis-full cursor-auto" onClick={(ev) => ev.stopPropagation()}>
                         {rowExpansion(t)}

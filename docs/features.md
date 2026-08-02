@@ -172,7 +172,8 @@ same-amount expense doesn't over-match. Candidates come from the read-only actio
 
 Clicking the flag on `/bank` navigates to `/split/{groupId}?expense={id}&month={YYYY-MM}`
 (scroll + flash-highlight on the split group page). On the split group detail page,
-a `bankLink` shows a bank icon on the row: the owner's own transaction navigates to
+a `bankLink` marks the row with a small inline bank glyph in the subtitle and adds a
+"View bank transaction" item to the row menu: the owner's own transaction navigates to
 `/bank?account=…&tx=…`; another member's opens `BankLinkDetailsDialog`
 (`src/components/split/bank-link-details-dialog.tsx`), a display-only dialog showing
 the member, bank, date, amount, and counterparty.
@@ -232,10 +233,12 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
   `"{Payer} paid {amount} · added by {Adder}"` with **first names** ('You' for self); a
   `paidBy`-less imported row omits the payer segment. The trailing net indicator is a
 **stacked** label-over-amount block ("you lent" / "you borrowed" at `text-xs` above the
-`tabular-nums` amount — zero net stays a single "—"), and titles `line-clamp-2` instead
-of truncating, so long merchant names stay readable on a phone. Rows show member `<UserAvatar>`s,
+`tabular-nums` amount — zero net stays a single "—"); titles are single-line
+`truncate text-sm leading-snug` and the only trailing button is the row menu, so the
+title keeps most of the row's width on a phone. Rows show member `<UserAvatar>`s,
   and the page applies optimistic UI on delete / rule pause-resume. A row with a
-  `bankLink` shows a bank icon (see "Bank-transaction linking" above); `?expense=&month=`
+  `bankLink` shows an inline bank glyph in its subtitle + a "View bank transaction" row-menu
+item (see "Bank-transaction linking" above); `?expense=&month=`
   deep-links to a row (extends `visibleCount` to reach the month, then scroll +
   flash-highlights it). The **Activity tab** makes its rows clickable through
   `SplitActivityFeed`'s `onEventClick`/`isEventClickable`/`myId` props — an expense event

@@ -78,11 +78,15 @@ export function MonthDetailsPanel({ projection, currency, onEditItem, isSimple =
                 wrapping is driven by the row's own rendered width (`@container`), not
                 the viewport — a viewport breakpoint would stay "wide" on desktop even
                 though the actual card is narrow. Below the container threshold the
-                connector/net-change pill is ordered last (dropping to its own
-                centered row so the two balances stay paired on the first line);
-                `@sm:order-none @sm:mx-0` restores today's single-line,
-                pill-in-the-middle look once the row is actually wide enough. */}
-            <div className="@container flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-2">
+                three blocks stack VERTICALLY in DOM order — Starting on top, the
+                net-change pill centered in the middle (its connector arrow rotated to
+                point down), Ending below — so the natural reading order is
+                Starting → Difference → Ending instead of the two balances pairing up
+                with the pill dropped onto its own row underneath. `@sm:flex-row
+                @sm:flex-wrap @sm:items-center @sm:justify-between @sm:gap-x-2` restores
+                today's single-line, pill-in-the-middle look (arrow pointing right)
+                once the row is actually wide enough. */}
+            <div className="@container flex flex-col items-center gap-y-1 py-2 @sm:flex-row @sm:flex-wrap @sm:items-center @sm:justify-between @sm:gap-x-2">
                 <div className="text-center min-w-0">
                     <div className={`flex items-center justify-center gap-0.5 text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
                         <span>{projection.isActualized ? plainTerm('balanceToday', isSimple) : 'Starting'}</span>
@@ -92,7 +96,7 @@ export function MonthDetailsPanel({ projection, currency, onEditItem, isSimple =
                         {formatCurrency(projection.startingBalance, currency)}
                     </div>
                 </div>
-                <div className="flex flex-col items-center gap-0.5 flex-shrink-0 order-last mx-auto @sm:order-none @sm:mx-0">
+                <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
                     {projection.isActualized && (
                         <div className={`flex items-center gap-0.5 text-[10px] uppercase tracking-wide ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                             <span>{plainTerm('stillAhead', isSimple)}</span>
@@ -110,7 +114,7 @@ export function MonthDetailsPanel({ projection, currency, onEditItem, isSimple =
                             </div>
                         </div>
                         <div className={`h-px w-4 ${isDark ? 'bg-gray-600' : 'bg-gray-300'}`} />
-                        <MdArrowForward size={12} className={isDark ? 'text-gray-500' : 'text-gray-400'} />
+                        <MdArrowForward size={12} className={`rotate-90 @sm:rotate-0 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
                     </div>
                 </div>
                 <div className="text-center min-w-0">

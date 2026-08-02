@@ -398,12 +398,18 @@ export function AppLayout({ children }: AppLayoutProps) {
 
                     {/* Global quick-add FAB for shared (split) expenses — the daily-driver
                         action, reachable from any page. Sits above the mobile bottom nav and
-                        bottom-right on desktop; z-40 so PrimeReact overlays still cover it. */}
+                        bottom-right on desktop; z-40 so PrimeReact overlays still cover it.
+                        Liquid-glass surface (translucent accent tint + backdrop blur + a
+                        faint light border) matching the house glass idiom — `.glass-chrome`
+                        (mobile-top-bar/bottom-nav) blurs at 20px, and the cashflow header's
+                        accent-tinted glass bar uses `backdrop-blur-lg`, so this FAB follows
+                        suit rather than the plain `backdrop-blur` used by smaller neutral
+                        pills. White icon + shadow-lg stay solid for contrast over the blur. */}
                     <button
                         type="button"
                         onClick={openSplitQuickAdd}
                         aria-label="Add shared expense"
-                        className="fixed right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] lg:right-6 lg:bottom-6 z-40 flex items-center justify-center w-14 h-14 rounded-full bg-accent-600 hover:bg-accent-700 text-white shadow-lg transition-colors"
+                        className="fixed right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] lg:right-6 lg:bottom-6 z-40 flex items-center justify-center w-14 h-14 rounded-full bg-accent-600/70 hover:bg-accent-600/85 backdrop-blur-lg border border-white/25 dark:border-white/15 text-white shadow-lg transition-colors"
                     >
                         <MdAdd size={28} />
                     </button>

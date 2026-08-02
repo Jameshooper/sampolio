@@ -483,6 +483,13 @@ export default function SplitGroupDetailPage() {
               }
             },
           },
+          {
+            label: 'View bank transaction',
+            visible: menuTarget?.kind === 'expense' && !!(menuTarget as SplitExpenseItem).bankLink,
+            command: () => {
+              if (menuTarget?.kind === 'expense') openBankLink(menuTarget as SplitExpenseItem);
+            },
+          },
           { label: 'Delete', command: () => menuTarget && doDelete(menuTarget) },
         ]}
       />
@@ -687,17 +694,15 @@ export default function SplitGroupDetailPage() {
                         ev.preventDefault();
                         activateRow(ev);
                       }}
-                      className="flex items-center gap-2 py-2.5 -mx-2 px-2 rounded-lg cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 active:bg-gray-100 dark:active:bg-gray-700/70"
+                      className="flex items-center gap-2 py-2 -mx-2 px-2 rounded-lg cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 active:bg-gray-100 dark:active:bg-gray-700/70"
                     >
                       <div className="w-9 shrink-0 text-center">
                         <div className="text-[11px] uppercase tracking-wide text-gray-400">{format(parseISO(e.date), 'MMM')}</div>
                         <div className="text-base font-medium text-gray-500 dark:text-gray-400 leading-tight">{format(parseISO(e.date), 'd')}</div>
                       </div>
-                      <CategoryIcon category={isPayment ? 'Payment' : (e as SplitExpenseItem).category} size={40} />
+                      <CategoryIcon category={isPayment ? 'Payment' : (e as SplitExpenseItem).category} size={36} />
                       <div className="min-w-0 flex-1">
-                        {/* line-clamp-2, not truncate: long merchant names (common on
-                            bank-imported rows) stay readable by wrapping to a second line. */}
-                        <div className="line-clamp-2 text-gray-900 dark:text-gray-100">
+                        <div className="truncate text-sm font-medium leading-snug text-gray-900 dark:text-gray-100">
                           {newIds.has(e.id) && (
                             <span
                               className="inline-block w-2 h-2 mr-1.5 rounded-full align-middle shrink-0 bg-[var(--primary-color)]"
@@ -709,32 +714,25 @@ export default function SplitGroupDetailPage() {
                           {title}
                           {e.source === 'recurring' && <span title="recurring" className="text-gray-400"> ↻</span>}
                         </div>
-                        <div className="truncate text-xs text-gray-400">{sub}</div>
+                        <div className="truncate text-xs leading-snug text-gray-400">
+                          {bankLink && (
+                            <span title="Linked to a bank transaction">
+                              <MdAccountBalance size={12} className="inline shrink-0 align-[-1px] mr-1 opacity-60" aria-hidden />
+                            </span>
+                          )}
+                          {sub}
+                        </div>
                       </div>
                       <div className="text-right shrink-0">
                         {viewerNet !== 0 ? (
                           <div className={viewerNet > 0 ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}>
-                            <div className="text-xs">{viewerNet > 0 ? 'you lent' : 'you borrowed'}</div>
-                            <div className="text-sm font-medium tabular-nums">{formatCents(Math.abs(viewerNet), group.currency)}</div>
+                            <div className="text-xs leading-snug">{viewerNet > 0 ? 'you lent' : 'you borrowed'}</div>
+                            <div className="text-sm font-medium leading-snug tabular-nums">{formatCents(Math.abs(viewerNet), group.currency)}</div>
                           </div>
                         ) : (
                           <div className="text-sm text-gray-400">—</div>
                         )}
                       </div>
-                      {bankLink && (
-                        <Button
-                          icon={<MdAccountBalance />}
-                          text
-                          rounded
-                          size="small"
-                          className="!w-10 !h-10 shrink-0 opacity-60"
-                          aria-label="Linked bank transaction"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            openBankLink(e as SplitExpenseItem);
-                          }}
-                        />
-                      )}
                       <Button icon={<MdMoreVert />} text rounded size="small" onClick={(ev) => onRowMenu(ev, e)} aria-label="Row actions" />
                     </li>
                   );
