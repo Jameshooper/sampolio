@@ -86,6 +86,48 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Reimbursement: '#a3e635',
   'Other Expense': '#d97706',
   'Credit cards': '#f59e0b', // matches the card-block amber in the charts
+  // --- Split categories (SPLIT_CATEGORIES) ---------------------------------
+  // Same warm/cool semantics. Overlapping names (Utilities, Insurance,
+  // Education, Travel, Entertainment) deliberately reuse the entries above so a
+  // category looks identical on every surface.
+  // Home & fixed costs (cool blues/indigos/cyans/slates)
+  Rent: '#1d4ed8',
+  Mortgage: '#4338ca',
+  Electricity: '#0ea5e9',
+  Water: '#0e7490',
+  Heating: '#0d9488',
+  'TV/Phone/Internet': '#6d28d9',
+  'Household supplies': '#06b6d4',
+  Maintenance: '#475569',
+  Cleaning: '#94a3b8',
+  'Home - Other': '#78716c',
+  Electronics: '#a78bfa',
+  Medical: '#0891b2',
+  Services: '#71717a',
+  Payment: '#64748b', // settlements — neutral, not real spend
+  General: '#a1a1aa',
+  Other: '#9ca3af', // neutral gray for the long-tail bucket
+  // Transport (warm ambers/yellows)
+  Transport: '#f59e0b',
+  'Bus/train': '#d97706',
+  Taxi: '#facc15',
+  Car: '#b45309',
+  Fuel: '#92400e',
+  Parking: '#a16207',
+  // Food & drink (warm oranges/reds)
+  Groceries: '#f97316',
+  'Dining out': '#ea580c',
+  Liquor: '#dc2626',
+  // Leisure, travel & personal (warm pinks/roses/purples)
+  Plane: '#f43f5e',
+  Hotel: '#be123c',
+  Movies: '#db2777',
+  Music: '#c026d3',
+  Games: '#9333ea',
+  Sports: '#65a30d',
+  Clothing: '#f472b6',
+  Gifts: '#fb7185',
+  Furniture: '#a855f7',
 };
 
 // Deterministic fallback shades for custom categories not in the map.

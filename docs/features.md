@@ -202,10 +202,18 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
   - an always-expanded **Insights** section — `getSplitInsights(monthsBack = 12)`
     (`src/lib/actions/split-groups.ts`; cached summaries → overlapping months' chunks →
     the pure `computeSplitInsights`) drives two lazy ECharts: `split-spend-chart.tsx`
-    (stacked spend, By group / By member toggle; tooltips append each series' share of
-    the month total as a percentage, and By-member mode also renders in-bar `{pct}%`
-    labels — suppressed under 8% or on empty months so thin slices stay clean) and
-    `split-net-chart.tsx` (running viewer-net line with a zero markLine). **Spend**
+    (stacked spend, By group / By member / **By category** toggle; tooltips append each
+    series' share of the month total as a percentage, and By-member mode also renders
+    in-bar `{pct}%` labels — suppressed under 8% or on empty months so thin slices stay
+    clean. Category mode buckets the engine's full `spendByCategory` through the pure
+    `bucketSpendByCategory(insights, 8)` — top-8 categories by window total plus an
+    aggregated 'Other' — and colors each category via `getCategoryColor`, never
+    positionally) and `split-net-chart.tsx` (running viewer-net line with a zero
+    markLine over green/orange **monthly-change bars**; the first month's bar is
+    measured against `insights.viewerNetBaseline` — the position just before the
+    window — and when a large standing balance dwarfs the deltas the bars move to a
+    hidden second y-axis whose zero is pixel-aligned with the primary axis's zero, so
+    they stay readable without lying about their anchor). **Spend**
     counts `kind === 'expense'` rows only. **Paid attribution**: native rows use exact `paidBy` shares; net-only
     **imported rows credit each member `max(0, net)` — a documented LOWER BOUND** (a
     payer who also consumed shows only their net), mirroring the imported-row fallback
@@ -216,7 +224,19 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
     enters the mode, drag/drop or arrow keys reorder, and the flat id order persists to
     `UserPreferences.splitGroupOrder` (`updateSplitGroupOrder`, sanitized against the
     current group ids).
-- `/split/[id]` — balance banner, an **Expenses / Activity** toggle (Activity reuses
+- `/split/[id]` — balance banner, a **"Last 30 days" insights card**
+  (`src/components/split/group-period-card.tsx`, between the banner and the recurring
+  rules; hidden when the group has no expenses): total spend headline, a segmented
+  who-paid bar tinted with each member's `getAvatarColor` (`role="img"` + descriptive
+  label) with an avatar/name/%/amount legend, and a default-closed `.collapse-grid`
+  expander holding top-3 category chips (`CategoryIcon`), top-3 single expenses, and
+  plain-words sentences from `describeGroupPeriod`. All math in the pure
+  `computeGroupPeriodInsights(members, rows, fromDate, toDate)`
+  (`src/lib/split-insights.ts`) over the already-loaded expense chunks — the 30-day
+  window spans at most two calendar months, always inside the initial 3-chunk load, so
+  the card needs no extra fetch. Payments count only toward `settledCents`; imported
+  rows use the same `max(0, net)` lower-bound paid attribution (a caveat note shows
+  when any are in-window). Then an **Expenses / Activity** toggle (Activity reuses
   `SplitActivityFeed` with `showGroup={false}`, fetched lazily via
   `getSplitActivity(30, groupId)` — the same action as Home's cross-group feed, now
   taking an optional `groupId`), month-paginated ledger (sticky month headers; older
@@ -877,14 +897,23 @@ current-vs-modified delta view on top, plus:
   expense is linked back to the transaction — see §1 "Bank-transaction linking")
   — hosted inside `bank-ledger-table.tsx`, no drawer plumbing. Already-linked or
   heuristically-matched rows show an "already split" flag pill instead.
-- **Plan vs reality card** (Overview): `compareForecastToActual`
-  (`src/lib/forecast-vs-actual.ts`, pure/tested) joins the current month's forecast
-  expense breakdown (past forecasts aren't stored) with the last retrospective
-  month's actuals by category — actual lines are re-categorized from merchant names
-  via `guessItemCategory`; injected lines (card/mortgage/budget) and the
-  Uncategorized bucket are excluded as non-actionable. Top-3 deviations render as
-  paired plan/actual bars (`src/components/overview/forecast-vs-actual-card.tsx`);
-  hidden without a retrospective.
+- **Plan check card** (Overview): `PlanCheckCard`
+  (`src/components/overview/forecast-vs-actual-card.tsx`, purely presentational — the
+  page passes the primary account's `monthly` + `retrospective` from its existing
+  `getProjection` calls) with two views behind a month toggle, default via
+  `pickDefaultView`. **Last month**: `comparePlanToActual`
+  (`src/lib/forecast-vs-actual.ts`, pure/tested) joins the *recurring* part of the
+  current plan (one-off planned items and injected card/mortgage/budget lines
+  excluded; past forecasts aren't stored) with the last retrospective month's actuals
+  by category — actual lines re-categorized from merchant names via
+  `guessItemCategory`, card-settlement lines dropped symmetrically with the plan side.
+  Top-4 off-plan rows render worded verdicts ("€X more/less than planned"), a bullet
+  bar (actual fill, plan tick) and expand to the actual merchant lines; on-plan count
+  and unmatched-spend footers close the view (`onPlanTolerance` = max(€5, 3% of
+  planned)). **This month**: `summarizeMonthProgress` over the actualized current
+  month — "€X of €Y" progress per category, never judged, expanding to per-item
+  paid/"€X left" tags. Hidden only when there's neither a retrospective nor an
+  actualized month.
 - **Euribor prefill**: `fetchCurrentEuribor12m()` (`src/lib/actions/euribor.ts`)
   fetches the latest 12-month Euribor from the ECB Data Portal
   (series `FM.M.U2.EUR.RT.MM.EURIBOR1YD_.HSTA`, csvdata, 5s timeout, 6h in-memory

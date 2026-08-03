@@ -32,8 +32,8 @@ Data visualization components:
 - `cashflow-waterfall-chart.tsx` — ECharts waterfall chart for balance progression
 - `expense-treemap-chart.tsx` — ECharts treemap for expense proportions
 - `scenario-comparison-chart.tsx` — lazy ECharts "Balance over time" line chart for the Playground (dashed Current plan vs solid With changes, zero markLine, red overlay tracing below-zero stretches)
-- `split-spend-chart.tsx` — lazy ECharts stacked bars for the /split Insights section (spend By group / By member toggle, hash palette)
-- `split-net-chart.tsx` — lazy ECharts running-net line for the /split Insights section (viewer net over time, zero markLine)
+- `split-spend-chart.tsx` — lazy ECharts stacked bars for the /split Insights section (spend By group / By member / By category toggle; group/member series use the stable hash palette, category mode buckets via `bucketSpendByCategory` top-8 + 'Other' and colors via `getCategoryColor`)
+- `split-net-chart.tsx` — lazy ECharts running-net line for the /split Insights section (viewer net over time, zero markLine) over green/orange monthly-change bars; first bar measured against `viewerNetBaseline`, and when the standing balance dwarfs the deltas the bars use a hidden zero-aligned second y-axis so they stay readable
 
 Charts mix ECharts (`echarts-for-react`, preferred for Sankey/waterfall/treemap) and Chart.js (`primereact/chart`, used by the two net-worth charts above). Feature-specific charts live with their feature: see `mortgage/mortgage-charts.tsx` + `mortgage/mortgage-sankey.tsx` and `budgets/budget-month-chart.tsx`.
 
@@ -58,7 +58,7 @@ Shared-mortgage UI: `mortgage-setup-wizard.tsx`, `mortgage-ledger-table.tsx`, `m
 Trip/project budget UI: `budgets-section.tsx` (the Budgets half of the merged "Trips & Budgets" page at `/budgets`, `<section id="budgets">`), `budget-setup-wizard.tsx`, `budget-card.tsx`, `budget-verdict-card.tsx`, `budget-coverage-bars.tsx`, `budget-vs-actual-bars.tsx`, `budget-expense-log.tsx`, `budget-month-chart.tsx`, `budget-panels.tsx`, `budget-dialogs.tsx`, `budget-confirm-dialog.tsx`, `budget-export-dialog.tsx`, `budget-templates.ts`.
 
 ### `split/`
-Split-group UI (Splitwise replacement): quick-add sheet (amount field first + autofocused), expense/settle/recurrence/import dialogs, activity feed, category icons, and `bank-link-details-dialog.tsx` — display-only dialog showing another member's linked bank transaction (member, bank, date, amount, counterparty; never an IBAN). Member displays (balance banner, settle-up dropdowns, activity actors, detail rows) show `<UserAvatar>`s; detail/activity rows are whole-row clickable (expense → edit dialog, payment → row menu).
+Split-group UI (Splitwise replacement): quick-add sheet (amount field first + autofocused), expense/settle/recurrence/import dialogs, activity feed, category icons, `group-period-card.tsx` — the detail page's "Last 30 days" insights card (segmented who-paid bar on `getAvatarColor`, `.collapse-grid` details with category chips / top expenses / `describeGroupPeriod` sentences; pure math in `computeGroupPeriodInsights`, deliberately no ECharts import) — and `bank-link-details-dialog.tsx` — display-only dialog showing another member's linked bank transaction (member, bank, date, amount, counterparty; never an IBAN). Member displays (balance banner, settle-up dropdowns, activity actors, detail rows) show `<UserAvatar>`s; detail/activity rows are whole-row clickable (expense → edit dialog, payment → row menu).
 
 ### `goals/`
 Financial goal UI (rendered by `/goals`):

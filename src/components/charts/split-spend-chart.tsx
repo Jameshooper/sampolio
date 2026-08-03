@@ -8,8 +8,8 @@ import { TooltipComponent, GridComponent, LegendComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers';
 import { useTheme } from '@/components/providers/theme-provider';
 import { useAppContext } from '@/components/layout/app-layout';
-import { formatCents, formatYearMonthShort } from '@/lib/constants';
-import type { SplitInsights } from '@/lib/split-insights';
+import { formatCents, formatYearMonthShort, getCategoryColor } from '@/lib/constants';
+import { bucketSpendByCategory, type SplitInsights } from '@/lib/split-insights';
 import type { Currency } from '@/types';
 
 echarts.use([BarChart, TooltipComponent, GridComponent, LegendComponent, CanvasRenderer]);
@@ -28,15 +28,21 @@ function colorForKey(key: string): string {
   return PALETTE[Math.abs(hash) % PALETTE.length];
 }
 
+/** Max category series before the long tail folds into one "Other" bucket. */
+const CATEGORY_LIMIT = 8;
+
 interface SplitSpendChartProps {
   insights: SplitInsights;
-  mode: 'group' | 'member';
+  mode: 'group' | 'member' | 'category';
   currency: Currency;
 }
 
 /** Stacked monthly spend across split groups — one bar per month, one stacked
- * series per group (mode 'group') or per member who fronted money (mode
- * 'member'). Width-fluid; the caller sets the height via its wrapper. */
+ * series per group (mode 'group'), per member who fronted money (mode
+ * 'member'), or per expense category (mode 'category', capped at
+ * CATEGORY_LIMIT + an "Other" bucket and colored from the app-wide
+ * CATEGORY_COLORS map, never positionally). Width-fluid; the caller sets the
+ * height via its wrapper. */
 export function SplitSpendChart({ insights, mode, currency }: SplitSpendChartProps) {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
@@ -47,14 +53,20 @@ export function SplitSpendChart({ insights, mode, currency }: SplitSpendChartPro
     const splitColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)';
     const months = insights.months;
 
+    // Category mode collapses the long tail into one "Other" series so the
+    // stack stays legible (pure helper, so the bucketing is unit-tested).
+    const buckets = mode === 'category' ? bucketSpendByCategory(insights, CATEGORY_LIMIT) : null;
+
     // Per-month total across whichever series set is showing (all groups' spend,
-    // or all members' fronted amounts), precomputed once so both the tooltip
-    // percentage and the in-bar labels (member mode) share the same numbers
-    // instead of re-summing per hover/render.
+    // all members' fronted amounts, or all categories), precomputed once so both
+    // the tooltip percentage and the in-bar labels (member mode) share the same
+    // numbers instead of re-summing per hover/render.
     const monthTotals =
       mode === 'group'
         ? months.map((m) => insights.groups.reduce((sum, g) => sum + (insights.spendByGroup[m]?.[g.id] ?? 0), 0))
-        : months.map((m) => insights.members.reduce((sum, mem) => sum + (insights.paidByMember[m]?.[mem.userId] ?? 0), 0));
+        : mode === 'category'
+          ? months.map((m) => buckets!.categories.reduce((sum, c) => sum + (buckets!.spend[m]?.[c] ?? 0), 0))
+          : months.map((m) => insights.members.reduce((sum, mem) => sum + (insights.paidByMember[m]?.[mem.userId] ?? 0), 0));
 
     const series =
       mode === 'group'
@@ -65,6 +77,16 @@ export function SplitSpendChart({ insights, mode, currency }: SplitSpendChartPro
             emphasis: { focus: 'series' as const },
             data: months.map((m) => insights.spendByGroup[m]?.[g.id] ?? 0),
             itemStyle: { color: colorForKey(g.id), borderRadius: [0, 0, 0, 0] as [number, number, number, number] },
+          }))
+        : mode === 'category'
+        ? buckets!.categories.map((category) => ({
+            name: category,
+            type: 'bar' as const,
+            stack: 'total',
+            emphasis: { focus: 'series' as const },
+            data: months.map((m) => buckets!.spend[m]?.[category] ?? 0),
+            // Canonical category color — never a positional palette index.
+            itemStyle: { color: getCategoryColor(category), borderRadius: [0, 0, 0, 0] as [number, number, number, number] },
           }))
         : insights.members.map((mem) => ({
             name: mem.name,

@@ -16,7 +16,7 @@
 
 import { formatYearMonth } from '@/lib/constants';
 import type { MonthFlowData, ProjectionLineItem } from '@/types';
-import type { SplitInsights } from '@/lib/split-insights';
+import type { GroupPeriodInsights, SplitInsights } from '@/lib/split-insights';
 
 /** Formats a money amount to a display string (demo-mask aware at call time). */
 export type MoneyFn = (amount: number) => string;
@@ -359,10 +359,14 @@ function sumByKey(byMonth: Record<string, Record<string, number>>, months: strin
 
 /**
  * Split spend chart: total shared spending over the window and who/which group
- * accounts for most of it. `fmt` formats integer cents (the caller passes a
- * cents formatter).
+ * /category accounts for most of it. `fmt` formats integer cents (the caller
+ * passes a cents formatter).
  */
-export function describeSplitSpend(insights: SplitInsights, mode: 'group' | 'member', fmt: MoneyFn): string[] {
+export function describeSplitSpend(
+    insights: SplitInsights,
+    mode: 'group' | 'member' | 'category',
+    fmt: MoneyFn
+): string[] {
     const totalByGroup = sumByKey(insights.spendByGroup, insights.months);
     const grand = Array.from(totalByGroup.values()).reduce((s, v) => s + v, 0);
 
@@ -383,6 +387,20 @@ export function describeSplitSpend(insights: SplitInsights, mode: 'group' | 'mem
                 ranked.length > 1
                     ? `Most runs through "${top.name}" — ${shareToWords(top.total, grand)} of it.`
                     : `It all runs through "${top.name}".`
+            );
+        }
+    } else if (mode === 'category') {
+        const byCategory = sumByKey(insights.spendByCategory, insights.months);
+        const ranked = Array.from(byCategory.entries())
+            .map(([category, total]) => ({ category, total }))
+            .filter((c) => c.total > 0)
+            .sort((a, b) => b.total - a.total);
+        const top = ranked[0];
+        if (top) {
+            sentences.push(
+                ranked.length > 1
+                    ? `${top.category} is the biggest category — ${shareToWords(top.total, grand)} of it.`
+                    : `It is all ${top.category}.`
             );
         }
     } else {
@@ -410,8 +428,13 @@ export function describeSplitSpend(insights: SplitInsights, mode: 'group' | 'mem
 }
 
 /**
- * Split running-net chart: where you stand now and which way it's leaned over
- * the window. `net > 0` ⇒ you're owed; `< 0` ⇒ you owe.
+ * Split running-net chart: where you stand now, which way it's leaned over the
+ * window, and the single month that moved it most. `net > 0` ⇒ you're owed;
+ * `< 0` ⇒ you owe.
+ *
+ * The monthly change is baseline-aware: the first month's delta is measured
+ * against `viewerNetBaseline` (the position just before the window), never
+ * against zero — otherwise month one would look like one giant swing.
  */
 export function describeSplitNet(insights: SplitInsights, fmt: MoneyFn): string[] {
     const months = insights.months;
@@ -445,7 +468,72 @@ export function describeSplitNet(insights: SplitInsights, fmt: MoneyFn): string[
         sentences.push('Over this time it has stayed close to even.');
     }
 
+    // The month that moved the balance most (bars on the chart).
+    const nets = months.map((m) => insights.viewerNetByMonth[m] ?? 0);
+    const deltas = nets.map((v, i) => v - (i === 0 ? insights.viewerNetBaseline : nets[i - 1]));
+    let biggest = 0;
+    for (let i = 1; i < deltas.length; i++) {
+        if (Math.abs(deltas[i]) > Math.abs(deltas[biggest])) biggest = i;
+    }
+    const move = deltas[biggest] ?? 0;
+    if (Math.abs(move) > 0.5) {
+        sentences.push(
+            move > 0
+                ? `${formatYearMonth(months[biggest])} moved it most, up ${fmt(move)}.`
+                : `${formatYearMonth(months[biggest])} moved it most, down ${fmt(Math.abs(move))}.`
+        );
+    }
+
     sentences.push('The line rising means people owe you more; falling means you owe more.');
+
+    return sentences;
+}
+
+/**
+ * One group's recent period (the split detail "Last 30 days" card): what the
+ * group spent, who fronted it, the leading category and the biggest single
+ * expense. `fmt` formats integer cents. `memberCount` gates the "who paid"
+ * sentence — with a single member there is nobody to compare against.
+ */
+export function describeGroupPeriod(
+    insights: GroupPeriodInsights,
+    memberCount: number,
+    fmt: MoneyFn
+): string[] {
+    if (insights.expenseCount === 0) {
+        return ['No shared expenses in this period.'];
+    }
+
+    const sentences: string[] = [
+        insights.expenseCount === 1
+            ? `This period the group shared one expense of ${fmt(insights.totalSpendCents)}.`
+            : `This period the group shared ${fmt(insights.totalSpendCents)} across ${insights.expenseCount} expenses.`,
+    ];
+
+    const payers = insights.paidByMember;
+    const topPayer = payers[0];
+    if (memberCount > 1 && topPayer) {
+        const totalPaid = payers.reduce((s, p) => s + p.cents, 0);
+        sentences.push(
+            payers.length > 1
+                ? `${topPayer.name} fronted the most — ${shareToWords(topPayer.cents, totalPaid)} of it.`
+                : `${topPayer.name} fronted all of it.`
+        );
+    }
+
+    const topCategory = insights.topCategories[0];
+    if (topCategory) {
+        sentences.push(
+            insights.topCategories.length > 1
+                ? `${topCategory.category} is the biggest category, at ${fmt(topCategory.cents)}.`
+                : `It is all ${topCategory.category}.`
+        );
+    }
+
+    const topExpense = insights.topExpenses[0];
+    if (topExpense && insights.expenseCount > 1) {
+        sentences.push(`The single biggest expense is ${topExpense.title} at ${fmt(topExpense.cents)}.`);
+    }
 
     return sentences;
 }

@@ -36,7 +36,7 @@ import { BannerStack, isCheckInBannerVisible } from '@/components/overview/banne
 import { KpiGroup } from '@/components/overview/kpi-group';
 import { NetWorthExplainDialog } from '@/components/overview/net-worth-explain-dialog';
 import { plainTerm, helpText } from '@/lib/plain-language';
-import { ForecastVsActualCard } from '@/components/overview/forecast-vs-actual-card';
+import { PlanCheckCard } from '@/components/overview/forecast-vs-actual-card';
 import { MdInfo, MdSync, MdShowChart, MdEuro, MdAccountBalanceWallet, MdBarChart, MdGroup, MdCreditCard, MdArrowForward, MdAddCircle, MdRemoveCircle, MdHouse, MdHomeWork } from 'react-icons/md';
 
 type EntityCategory = 'cash' | 'investments' | 'receivables' | 'debts';
@@ -158,6 +158,8 @@ export default function OverviewPage() {
     const [budgetBanner, setBudgetBanner] = useState<{ type: 'upcoming' | 'over-budget'; budget: Budget; category?: string } | null>(null);
     // User preference: show the "time to check in" reminder banner (default on).
     const [checkInRemindersEnabled, setCheckInRemindersEnabled] = useState(true);
+    // Primary account's plan + bank-actual history, for the "Plan check" card.
+    const [planCheck, setPlanCheck] = useState<{ monthly: MonthlyProjection[]; retrospective: MonthlyProjection[] } | null>(null);
 
     const userId = session?.user?.id;
 
@@ -239,7 +241,10 @@ export default function OverviewPage() {
                 Promise.all(activeReceivables.map((rec: Receivable) => getRepayments(rec.id).then(r => [rec.id, r.success && r.data ? r.data : []] as [string, ReceivableRepayment[]]))),
                 Promise.all(activeDebts.map((d: Debt) => getReferenceRates(d.id).then(r => [d.id, r.success && r.data ? r.data : []] as [string, DebtReferenceRate[]]))),
                 Promise.all(activeDebts.map((d: Debt) => getExtraPayments(d.id).then(r => [d.id, r.success && r.data ? r.data : []] as [string, DebtExtraPayment[]]))),
-                Promise.all(activeAccounts.map((a: FinancialAccount) => getProjection(a.id).then(r => [a.id, r.success && r.data ? r.data.monthly : []] as [string, MonthlyProjection[]]))),
+                Promise.all(activeAccounts.map((a: FinancialAccount) => getProjection(a.id).then(r => [a.id, {
+                    monthly: r.success && r.data ? r.data.monthly : [],
+                    retrospective: r.success && r.data ? (r.data.retrospective ?? []) : [],
+                }] as [string, { monthly: MonthlyProjection[]; retrospective: MonthlyProjection[] }]))),
                 Promise.all(activeInvestments.map((inv: InvestmentAccount) => getLatestSnapshot('investment', inv.id).then(r => [inv.id, r.success && r.data ? r.data : null] as [string, BalanceSnapshot | null]))),
                 Promise.all(activeReceivables.map((rec: Receivable) => getLatestSnapshot('receivable', rec.id).then(r => [rec.id, r.success && r.data ? r.data : null] as [string, BalanceSnapshot | null]))),
                 Promise.all(activeDebts.map((d: Debt) => getLatestSnapshot('debt', d.id).then(r => [d.id, r.success && r.data ? r.data : null] as [string, BalanceSnapshot | null]))),
@@ -250,7 +255,15 @@ export default function OverviewPage() {
             const receivableRepayments = new Map<string, ReceivableRepayment[]>(repaymentsResults);
             const debtReferenceRates = new Map<string, DebtReferenceRate[]>(ratesResults);
             const debtExtraPayments = new Map<string, DebtExtraPayment[]>(extraPaymentsResults);
-            const cashProjections = new Map<string, MonthlyProjection[]>(cashProjectionsResults);
+            const cashProjections = new Map<string, MonthlyProjection[]>(
+                cashProjectionsResults.map(([id, p]) => [id, p.monthly] as [string, MonthlyProjection[]])
+            );
+            // The "Plan check" card compares the primary account's plan against
+            // its bank-actual history.
+            const primaryAccountId: string | undefined = activeAccounts[0]?.id;
+            setPlanCheck(
+                (primaryAccountId ? cashProjectionsResults.find(([id]) => id === primaryAccountId)?.[1] : undefined) ?? null
+            );
             const investmentSnapshots = new Map<string, BalanceSnapshot | null>(investmentSnapshotResults);
             const receivableSnapshots = new Map<string, BalanceSnapshot | null>(receivableSnapshotResults);
             const debtSnapshots = new Map<string, BalanceSnapshot | null>(debtSnapshotResults);
@@ -773,9 +786,10 @@ export default function OverviewPage() {
                             />
                         </div>
                     </Card>
-                    {accounts.length > 0 && (
-                        <ForecastVsActualCard
-                            accountId={accounts.find((a) => !a.isArchived)?.id ?? ''}
+                    {planCheck && (
+                        <PlanCheckCard
+                            monthly={planCheck.monthly}
+                            retrospective={planCheck.retrospective}
                             currency={displayCurrency}
                         />
                     )}

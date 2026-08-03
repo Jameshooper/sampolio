@@ -48,17 +48,21 @@ interface GroupCard {
   hasNew: boolean;
 }
 
+type SpendMode = 'group' | 'member' | 'category';
+
 const spendModeOptions = [
   { label: 'By group', value: 'group' as const },
   { label: 'By member', value: 'member' as const },
+  { label: 'By category', value: 'category' as const },
 ];
 
 const spendHowToRead: ReadCue[] = [
   { shape: 'square', color: '#3b82f6', text: 'Each bar is one month; taller bars mean more shared spending.' },
-  { shape: 'updown', color: '#22c55e', color2: '#f59e0b', text: 'Colours stack up the bar — one colour per group, or per person.' },
+  { shape: 'updown', color: '#22c55e', color2: '#f59e0b', text: 'Colours stack up the bar — one per group, person, or category.' },
 ];
 const netHowToRead: ReadCue[] = [
   { shape: 'line', color: '#3b82f6', text: 'The line is your running balance across all groups.' },
+  { shape: 'updown', color: '#22c55e', color2: '#f97316', text: 'Bars are that month’s change: green up, orange down.' },
   { shape: 'updown', color: '#22c55e', color2: '#f59e0b', text: 'Above the dashed line people owe you; below it, you owe them.' },
   { shape: 'line', color: '#9ca3af', dashed: true, text: 'The dashed line is zero — being all settled up.' },
 ];
@@ -79,7 +83,7 @@ function SplitInsightsCharts({
   mixed: boolean;
 }) {
   const { demoMasked } = useAppContext() ?? {};
-  const [spendMode, setSpendMode] = useState<'group' | 'member'>('group');
+  const [spendMode, setSpendMode] = useState<SpendMode>('group');
 
   const spendDescription = useMemo(
     () => describeSplitSpend(insights, spendMode, (n) => formatCents(n, currency)),

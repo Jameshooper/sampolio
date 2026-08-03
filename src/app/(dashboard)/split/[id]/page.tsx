@@ -15,6 +15,7 @@ import { GroupFormDialog } from '@/components/split/group-form-dialog';
 import { RecurrenceRuleDialog } from '@/components/split/recurrence-rule-dialog';
 import { SplitImportDialog } from '@/components/split/split-import-dialog';
 import { BankLinkDetailsDialog } from '@/components/split/bank-link-details-dialog';
+import { GroupPeriodCard } from '@/components/split/group-period-card';
 import { DelayedSpinner } from '@/components/ui/delayed-loading';
 import { SplitDetailSkeleton } from '@/components/ui/skeletons';
 import { UserAvatar } from '@/components/ui/user-avatar';
@@ -553,6 +554,11 @@ export default function SplitGroupDetailPage() {
           <Button label="Import" icon={<MdUploadFile />} outlined size="small" onClick={() => setShowImport(true)} />
         </div>
       </div>
+
+      {/* Last-30-days snapshot (hidden until the group has any expense) */}
+      {summary && summary.expenseCount > 0 && (
+        <GroupPeriodCard group={group} expenses={expenses} myUserId={myId} />
+      )}
 
       {/* Recurring rules */}
       {group.recurrenceRules.length > 0 && (

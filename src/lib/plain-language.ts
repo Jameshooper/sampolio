@@ -88,6 +88,36 @@ export const PLAIN_TERMS = {
         plain: 'Already paid',
         help: 'This item matched a real bank transaction this month, so it\'s already included in your balance.',
     },
+    planCheck: {
+        term: 'Plan vs reality',
+        plain: 'Plan check',
+        help: 'Compares your planned spending with what your bank actually recorded, category by category.',
+    },
+    overPlan: {
+        term: 'over plan',
+        plain: 'more than planned',
+        help: 'You spent more in this category than your plan expected.',
+    },
+    underPlan: {
+        term: 'under plan',
+        plain: 'less than planned',
+        help: 'You spent less in this category than your plan expected.',
+    },
+    onPlan: {
+        term: 'on plan',
+        plain: 'as planned',
+        help: 'This category came out close enough to your plan to count as on target.',
+    },
+    lastMonthBaseline: {
+        term: 'Compared with your recurring plan',
+        plain: 'Compared with your recurring plan',
+        help: 'Past plans aren\'t stored, so last month is compared with the recurring items in your current plan — a fair stand-in, since those repeat every month. One-off planned items are left out.',
+    },
+    paidOfPlanned: {
+        term: 'paid so far',
+        plain: 'paid so far',
+        help: 'What your bank has recorded as paid this month, out of what you planned.',
+    },
 } as const satisfies Record<string, PlainTermEntry>;
 
 export type PlainTermKey = keyof typeof PLAIN_TERMS;

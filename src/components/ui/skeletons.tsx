@@ -88,12 +88,16 @@ export function HomeSkeleton() {
   );
 }
 
-/** Split group detail: the balance banner + a stack of expense rows. */
+/**
+ * Split group detail: the balance banner, the "Last 30 days" card, then a stack
+ * of expense rows.
+ */
 export function SplitDetailSkeleton() {
   return (
     <DelayedSkeleton>
       <div className="max-w-3xl mx-auto py-4 lg:py-6 space-y-4">
         <Skeleton height="4.5rem" borderRadius="0.75rem" className="w-full" />
+        <Skeleton height="7rem" borderRadius="0.75rem" className="w-full" />
         <div className="flex flex-col gap-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} height="3.5rem" borderRadius="0.75rem" className="w-full" />

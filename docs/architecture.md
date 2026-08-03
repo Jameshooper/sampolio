@@ -308,12 +308,12 @@ any deploy that changes cached assets. Responsive/PWA UI rules: root `AGENTS.md`
 | `home/` | `HomeDashboard` (glance tile, split balances, activity feed) |
 | `bank/` | Connections settings panel, account picker, transaction ledger table, account-order dialog |
 | `cashflow/` | Collapsing header, month strip, month-details panel, projection table |
-| `overview/` | `BannerStack`, `KpiGroup`, forecast-vs-actual card, net-worth explain dialog |
+| `overview/` | `BannerStack`, `KpiGroup`, plan-check card (`forecast-vs-actual-card.tsx`), net-worth explain dialog |
 | `budgets/` | Merged-page Budgets section, setup wizard, verdict card, coverage bars, expense log, dialogs |
 | `goals/` | Goal card, create/edit dialog |
 | `trips/` | Merged-page Trips section, trip card, create/edit dialog, per-diem breakdown |
 | `mortgage/` | Setup wizard, ledger table, charts, Sankey, reconcile/import dialogs |
-| `split/` | Quick-add modal, `SplitEditor`, expense/settle/recurrence/import dialogs, activity feed |
+| `split/` | Quick-add modal, `SplitEditor`, expense/settle/recurrence/import dialogs, activity feed, `group-period-card` (last-30-days insights) |
 | `onboarding/` | Onboarding wizard |
 | `reconcile/` | Reconciliation wizard |
 | `ui/` | `CommandPalette`, `EntityListDrawer`, `EntityModalRouter`, `KpiTile`, `AlertBanner`, `HelpHint`, `EmptyState`, skeletons, delayed-loading primitives, form primitives |

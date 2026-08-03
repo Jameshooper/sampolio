@@ -8,6 +8,7 @@ import {
     describeScenario,
     describeSplitSpend,
     describeSplitNet,
+    describeGroupPeriod,
     describeBudgetMonths,
     describeMortgageBalance,
     describeOwnershipProgress,
@@ -21,7 +22,7 @@ import {
     type WaterfallMonthLike,
 } from './chart-descriptions';
 import type { MonthFlowData, CashflowItem, ProjectionLineItem } from '@/types';
-import type { SplitInsights } from '@/lib/split-insights';
+import type { GroupPeriodInsights, SplitInsights } from '@/lib/split-insights';
 
 // Trivial money formatter — deterministic and locale-free so assertions can
 // match exact substrings without depending on Intl output.
@@ -299,7 +300,10 @@ function insights(partial: Partial<SplitInsights>): SplitInsights {
         currencies: ['EUR'],
         spendByGroup: {},
         paidByMember: {},
+        spendByCategory: {},
+        categories: [],
         viewerNetByMonth: {},
+        viewerNetBaseline: 0,
         ...partial,
     };
 }
@@ -335,6 +339,19 @@ describe('describeSplitSpend', () => {
         const text = describeSplitSpend(ins, 'member', fmt).join(' ');
         expect(text).toContain('Ana fronts the most');
     });
+    it('names the biggest category in category mode', () => {
+        const ins = insights({
+            months: ['2026-07'],
+            groups: [{ id: 'g1', name: 'Flat', currency: 'EUR' }],
+            spendByGroup: { '2026-07': { g1: 10000 } },
+            spendByCategory: { '2026-07': { Rent: 9000, Groceries: 1000 } },
+            categories: ['Rent', 'Groceries'],
+        });
+        const text = describeSplitSpend(ins, 'category', fmt).join(' ');
+        expect(text).toContain('€10000');
+        expect(text).toContain('Rent is the biggest category');
+        expect(text).toContain('almost all');
+    });
     it('handles no spending', () => {
         expect(describeSplitSpend(insights({ months: ['2026-07'] }), 'group', fmt)[0]).toContain('no shared spending');
     });
@@ -354,6 +371,93 @@ describe('describeSplitNet', () => {
         const ins = insights({ months: ['2026-07'], viewerNetByMonth: { '2026-07': -2500 } });
         const text = describeSplitNet(ins, fmt).join(' ');
         expect(text).toContain('you owe €2500');
+    });
+    it('names the month that moved the balance most', () => {
+        const ins = insights({
+            months: ['2026-05', '2026-06', '2026-07'],
+            viewerNetByMonth: { '2026-05': 1000, '2026-06': 5000, '2026-07': 4500 },
+            viewerNetBaseline: 500,
+        });
+        const text = describeSplitNet(ins, fmt).join(' ');
+        // deltas: +500, +4000, −500 ⇒ June is the biggest move
+        expect(text).toContain('June 2026 moved it most, up €4000');
+    });
+    it('measures the first month against the pre-window baseline', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            viewerNetByMonth: { '2026-06': 9000, '2026-07': 9100 },
+            viewerNetBaseline: 8000,
+        });
+        const text = describeSplitNet(ins, fmt).join(' ');
+        // delta[0] is 1000 (not 9000), so June still wins but only by 1000
+        expect(text).toContain('June 2026 moved it most, up €1000');
+    });
+    it('omits the biggest-move sentence when nothing moved', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            viewerNetByMonth: { '2026-06': 0, '2026-07': 0 },
+        });
+        expect(describeSplitNet(ins, fmt).join(' ')).not.toContain('moved it most');
+    });
+});
+
+describe('describeGroupPeriod', () => {
+    const period = (partial: Partial<GroupPeriodInsights>): GroupPeriodInsights => ({
+        totalSpendCents: 0,
+        expenseCount: 0,
+        settledCents: 0,
+        paidByMember: [],
+        topCategories: [],
+        topExpenses: [],
+        hasImportedRows: false,
+        ...partial,
+    });
+
+    it('reports the empty period first', () => {
+        expect(describeGroupPeriod(period({}), 2, fmt)).toEqual(['No shared expenses in this period.']);
+    });
+
+    it('covers total, top payer, top category and biggest expense', () => {
+        const text = describeGroupPeriod(
+            period({
+                totalSpendCents: 12000,
+                expenseCount: 4,
+                paidByMember: [
+                    { userId: 'u1', name: 'Ana', cents: 9000, pct: 0.75 },
+                    { userId: 'u2', name: 'Bob', cents: 3000, pct: 0.25 },
+                ],
+                topCategories: [
+                    { category: 'Groceries', cents: 7000, count: 2 },
+                    { category: 'Taxi', cents: 5000, count: 2 },
+                ],
+                topExpenses: [{ id: 'e1', title: 'Big shop', category: 'Groceries', cents: 5000, date: '2026-07-04' }],
+            }),
+            2,
+            fmt
+        );
+        expect(text).toHaveLength(4);
+        const joined = text.join(' ');
+        expect(joined).toContain('€12000 across 4 expenses');
+        expect(joined).toContain('Ana fronted the most');
+        expect(joined).toContain('Groceries is the biggest category, at €7000');
+        expect(joined).toContain('biggest expense is Big shop at €5000');
+    });
+
+    it('skips the payer sentence in a one-member group', () => {
+        const text = describeGroupPeriod(
+            period({
+                totalSpendCents: 2000,
+                expenseCount: 1,
+                paidByMember: [{ userId: 'u1', name: 'Ana', cents: 2000, pct: 1 }],
+                topCategories: [{ category: 'Taxi', cents: 2000, count: 1 }],
+                topExpenses: [{ id: 'e1', title: 'Ride', category: 'Taxi', cents: 2000, date: '2026-07-04' }],
+            }),
+            1,
+            fmt
+        ).join(' ');
+        expect(text).toContain('one expense of €2000');
+        expect(text).not.toContain('fronted');
+        expect(text).toContain('It is all Taxi.');
     });
 });
 
