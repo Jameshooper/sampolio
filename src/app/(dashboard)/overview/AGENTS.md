@@ -23,11 +23,40 @@ groups. Tile semantics:
 - **Investments**: Total investment valuations
 - **Receivables**: Money owed to the user
 - **Debts**: Outstanding liabilities (shown as negative)
-- **Credit cards**: Total outstanding across synced credit cards (shown as negative; from `getCardLiabilities`), with an "available of limit" subline + utilization bar when the bank exposes limits. Never also enter a card as a Debt.
+- **Credit cards**: Total outstanding across synced credit cards (shown as negative; from `getCardLiabilities`), with an "available of limit" subline + utilization bar when the bank exposes limits. The bar's fill still tracks utilization, but its color reads health rather than the tile's own (liability) severity: green below 50%, yellow 50–80%, red at/above 80%, via `KpiTile`'s `progressSeverity` prop (independent of `severity`, which stays `"danger"` for the icon/value). Never also enter a card as a Debt.
 
 The reminder banners all render through `BannerStack` (`src/components/overview/banner-stack.tsx`, built on the shared `AlertBanner`); the header "Monthly check-in" button hides while the check-in banner shows (`isCheckInBannerVisible`) so the banner is the single entry point.
 
 Clicking a KPI card opens the **EntityListDrawer** (`src/components/ui/entity-list-drawer.tsx`) for Cash/Investments/Receivables/Debts — showing all entities of that type with create/edit/archive actions. The Net Worth tile instead opens the plain-words **NetWorthExplainDialog** (`src/components/overview/net-worth-explain-dialog.tsx`), and the Mortgage share / Credit cards / Split balance tiles navigate to their owning pages (`/mortgage`, `/bank`, `/split`).
+
+### Wealth Distribution Bar ("Where your wealth sits")
+`WealthDistribution` (`src/components/overview/wealth-distribution.tsx`) — a slim CSS
+segmented bar + legend showing how the **current** asset total splits across Cash,
+Investments, Receivables, Home equity and a positive Split balance. Rendered directly
+below the KPI tiles in **both display modes** (deliberately outside the chart grid,
+which Simple mode hides). A dumb display component: it takes the page's `kpiValues`
+(already in the display currency), `displayCurrency`, `isMixedCurrency` and `isSimple` —
+nothing is fetched or converted.
+
+- Categories with a value ≤ €0.005 are dropped; the card renders `null` only when **no**
+  asset is positive. A single positive category still renders (a 100% bar is a real
+  answer, and hiding it would make the card appear only once a second asset exists).
+- Colors come from the shared `WEALTH_COLORS` map in `charts/wealth-chart.tsx` (via
+  `rgb(key)`), so a category reads the same here as in the breakdown chart; the split
+  category uses the `split` indigo entry, added there for this card.
+- Not a canvas chart, so it deliberately has **no** `ChartExplain` integration — the bar
+  is `role="img"` with a generated `aria-label` ("Wealth distribution: Cash 60%,
+  Investments 40%."), and the legend + footer carry the same information as text. Tiny
+  non-zero segments keep a `0.375rem` minimum width so they stay visible.
+- Title/labels via `plainTerm`/`helpText` (`wealthMix`, plus `receivables`,
+  `homeEquity`, `investments`, `splitBalance`), with a `HelpHint` next to the title and
+  the page's "(mixed currencies)" note when accounts span currencies.
+- Footer sentence (only when something is owed): "After €X of debts and credit cards,
+  your net worth is €Y." An **owed** split balance counts there, never as a segment;
+  mortgage liability is deliberately excluded because `mortgageEquity` is already net of
+  the loan share — so assets − footer total ≡ the Net Worth KPI.
+
+Tested in `src/components/overview/wealth-distribution.test.tsx` (jsdom).
 
 ### Net Worth Projection Chart
 Chart.js line/area chart (`src/components/charts/net-worth-chart.tsx`, via `primereact/chart`) showing projected net worth over time:

@@ -120,7 +120,7 @@ components.
 | `split-groups.ts` | `getMySplitGroups`, `getSplitGroupView`, `getSplitExpenses`, `getSplitActivity`, `getSplitInsights`, `getMySplitNetBalance`, `getMySplitLinkCandidates`, `getSettleUpSuggestions`, `createSplitGroup`, `updateSplitGroup`, `deleteSplitGroup`, `addSplitGroupMember`, `removeSplitGroupMember`, `setDefaultSplitGroup`, `createSplitExpense`, `quickAddSplitExpense`, `updateSplitExpense`, `deleteSplitExpense`, `recordSettleUp`, `createSplitRecurrenceRule`, `updateSplitRecurrenceRule`, `deleteSplitRecurrenceRule`, `catchUpGroupRecurrences`, `importSplitwiseCsv`, `markSplitGroupSeen` — every mutating action additionally calls `notifySplitActivity` (`src/lib/split-notify.ts`) after its write + cache invalidation, which schedules a Home Assistant webhook POST for after the response (§11) |
 | `taxed-income.ts` | `getTaxedIncomes`, `getTaxedIncomeById`, `createTaxedIncome`, `updateTaxedIncome`, `deleteTaxedIncome` |
 | `trips.ts` | `getTrips`, `getTripById`, `createTrip`, `updateTrip`, `deleteTrip` |
-| `user-preferences.ts` | `getUserPreferences`, `completeOnboarding`, `updateCategories`, `updateCheckInReminders`, `updateCheckInNotifications`, `updateSplitNotificationPrefs` (five-key opt-out record for the split webhook events), `getSplitNotifyStatus` (is `HA_WEBHOOK_URL` configured), `updateBankAccountOrder`, `updateSplitGroupOrder`, `updateDisplayMode`, `updateTaxDefaults` |
+| `user-preferences.ts` | `getUserPreferences`, `completeOnboarding`, `updateCategories`, `updateCheckInReminders`, `updateCheckInNotifications`, `updateSplitNotificationPrefs` (five-key opt-out record for the split webhook events), `getSplitNotifyStatus` (is `HA_WEBHOOK_URL` configured), `updateBankAccountOrder`, `updateSplitGroupOrder`, `updateBottomNavIds` (mobile bottom-nav tabs; `null` resets to the per-display-mode defaults), `updateDisplayMode`, `updateTaxDefaults` |
 | `user-profiles.ts` | `getUserProfiles` — `{ id, name, avatarUrl? }` for any authenticated user (no email/role; safe for cross-user member displays) |
 
 Tax & contribution defaults (`UserPreferences.taxDefaults`) are **per-user** preferences
@@ -301,7 +301,7 @@ any deploy that changes cached assets. Responsive/PWA UI rules: root `AGENTS.md`
 
 | Directory | Contents |
 |---|---|
-| `layout/` | `AppLayout` (AppContext + SessionProvider + ToastProvider host), `SidebarNav`, `MobileTopBar`, `BottomNav`, `MobileNavDrawer`, shared `nav-config.tsx` (single source for all four nav surfaces) |
+| `layout/` | `AppLayout` (AppContext + SessionProvider + ToastProvider host), `SidebarNav`, `MobileTopBar`, `BottomNav` (1–4 user-chosen tabs + fixed "More"; resolved by `src/lib/bottom-nav-prefs.ts` from `UserPreferences.bottomNavIds`, customizable in Settings → General), `MobileNavDrawer`, shared `nav-config.tsx` (single source for all four nav surfaces) |
 | `providers/` | `PrimeProvider`, `ThemeProvider`, `ToastProvider`, `CelebrationProvider`, `ServiceWorkerRegister` |
 | `charts/` | ECharts/Chart.js components (cashflow waterfall, treemap, monthly flow, net-worth, wealth, scenario comparison) |
 | `modals/` | Cashflow item modal, occurrence-override dialog, users (admin) modal |
@@ -363,7 +363,7 @@ wraps components in ThemeProvider). ~50 test files:
 - **Schemas** (`src/lib/schemas/*.test.ts`): `auth.schema`, `cashflow-schemas`,
   `occurrence-override.schema`
 - **Convenience engines** (`src/lib/*.test.ts`): `category-utils`,
-  `recurring-detection`, `forecast-vs-actual`
+  `recurring-detection`, `forecast-vs-actual`, `bottom-nav-prefs`
 - **Local-only parity suites** (`*.local.test.ts`, **gitignored**): mirror a
   committed suite but assert against the maintainer's real financial records
   (`mortgage-projection.local`, `split-csv.local`). Vitest's default glob picks
@@ -377,7 +377,7 @@ wraps components in ThemeProvider). ~50 test files:
   actions mocked with `vi.mock`)
 
 **No coverage exists for**: most pages, server actions (auth/validation/cache-tag
-behavior — except a representative goals/trips slice), the bank client/connect/sync
+behavior — except a representative goals/trips/user-preferences slice), the bank client/connect/sync
 modules, `proxy.ts`, and there are no e2e/browser tests. Manual
 verification uses the `sampolio-preview` launch config + `preview_*` tools.
 

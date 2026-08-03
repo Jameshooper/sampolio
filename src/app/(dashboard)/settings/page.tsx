@@ -21,6 +21,7 @@ import { useToast } from '@/components/providers/toast-provider';
 import { getSettings, updateSettings, revalidateAllCaches } from '@/lib/actions/admin';
 import { getUserPreferences, updateCategories, updateTaxDefaults, updateCheckInReminders, updateCheckInNotifications, updateSplitNotificationPrefs, getSplitNotifyStatus } from '@/lib/actions/user-preferences';
 import { AlertBanner } from '@/components/ui/alert-banner';
+import { MobileNavCard } from '@/components/settings/mobile-nav-card';
 import { getAppVersion } from '@/lib/actions/app-info';
 import { previewHistoryCompaction, compactHistory, type HistoryCompactionStats } from '@/lib/actions/maintenance';
 import { exportUserData, importUserData } from '@/lib/actions/data-transfer';
@@ -919,6 +920,7 @@ function SettingsPageInner() {
                 <TabPanel header="General">
                     <div className="space-y-6">
                         {displayModeCard}
+                        <MobileNavCard />
                         {appearanceCard}
                         {remindersCard}
                         {pushNotificationsCard}

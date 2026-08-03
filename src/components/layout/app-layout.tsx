@@ -47,6 +47,12 @@ interface AppContextValue {
     // Display mode
     displayMode: DisplayMode;
     setDisplayMode: (mode: DisplayMode) => void;
+    // Custom mobile bottom-nav tab ids (null = not customized ⇒ per-mode defaults).
+    // Unlike setDisplayMode this setter does NOT persist: the Settings card owns
+    // the write, because it needs the ApiResponse for rollback + a toast (and
+    // AppLayout sits above ToastProvider, so it cannot toast).
+    bottomNavIds: string[] | null;
+    setBottomNavIds: (ids: string[] | null) => void;
     // Demo mode (UI-only monetary masking for showing the app to friends)
     demoMode: boolean;
     /** Whether values render masked right now (demoMode AND not on an exempt page). */
@@ -178,6 +184,9 @@ export function AppLayout({ children }: AppLayoutProps) {
         await updateDisplayMode(mode);
     }, []);
 
+    // Custom mobile bottom-nav tabs (null ⇒ per-display-mode defaults).
+    const [bottomNavIds, setBottomNavIds] = useState<string[] | null>(null);
+
     // Onboarding wizard state
     const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -186,6 +195,9 @@ export function AppLayout({ children }: AppLayoutProps) {
             if (result.success && result.data) {
                 if (!result.data.hasCompletedOnboarding) {
                     setShowOnboarding(true);
+                }
+                if (result.data.bottomNavIds) {
+                    setBottomNavIds(result.data.bottomNavIds);
                 }
                 if (result.data.displayMode) {
                     setDisplayModeState(result.data.displayMode);
@@ -271,6 +283,8 @@ export function AppLayout({ children }: AppLayoutProps) {
         setSidebarCollapsed,
         displayMode,
         setDisplayMode,
+        bottomNavIds,
+        setBottomNavIds,
         demoMode,
         demoMasked,
         setDemoMode,
@@ -290,6 +304,8 @@ export function AppLayout({ children }: AppLayoutProps) {
         setSidebarCollapsed,
         displayMode,
         setDisplayMode,
+        bottomNavIds,
+        setBottomNavIds,
         demoMode,
         demoMasked,
         setDemoMode,

@@ -25,6 +25,7 @@ export const WEALTH_COLORS = {
     debts: '239, 68, 68', // red
     cards: '244, 63, 94', // rose
     mortgage: '120, 53, 15', // deep brown — distinct from debts red
+    split: '99, 102, 241', // indigo — split balances (distribution card only)
 } as const;
 
 export function rgb(key: keyof typeof WEALTH_COLORS): string {

@@ -46,6 +46,23 @@ describe('KpiTile', () => {
     expect(screen.getByText('€3 500 available')).toBeInTheDocument();
   });
 
+  it('colors the progress bar via progressSeverity, independently of severity', () => {
+    const { container } = renderWithProviders(
+      <KpiTile title="Credit cards" value={1000} progress={0.3} severity="danger" progressSeverity="success" icon={<span />} />
+    );
+    const bar = container.querySelector('.h-full.rounded-full');
+    expect(bar).toHaveClass('bg-green-500');
+    expect(bar).not.toHaveClass('bg-red-500');
+  });
+
+  it('falls back to severity for the progress bar color when progressSeverity is omitted', () => {
+    const { container } = renderWithProviders(
+      <KpiTile title="Credit cards" value={1000} progress={0.3} severity="danger" icon={<span />} />
+    );
+    const bar = container.querySelector('.h-full.rounded-full');
+    expect(bar).toHaveClass('bg-red-500');
+  });
+
   it('is keyboard-activatable when clickable', () => {
     const onClick = vi.fn();
     renderWithProviders(<KpiTile title="Cash" value={1} icon={<span />} onClick={onClick} />);

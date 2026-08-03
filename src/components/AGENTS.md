@@ -40,6 +40,7 @@ Charts mix ECharts (`echarts-for-react`, preferred for Sankey/waterfall/treemap)
 ### `layout/`
 - `app-layout.tsx` — Main layout wrapper with AppContext provider. Manages drawer state, selected account, refresh callbacks, sidebar state. This is the central state hub.
 - `sidebar-nav.tsx` — Left navigation sidebar with the app routes (from the shared `nav-config.tsx` via `useVisibleNavItems()`, which filters to `simpleModeVisible` entries in Simple display mode), a search quick action (the monthly check-in lives on Overview + ⌘M/palette, not in the chrome), user menu (`useUserMenuItems` in `nav-config.tsx`: a single non-interactive name+email template item, full-contrast name + one opacity-70 truncated email; theme/display-mode/sign-out items use an icon+label template with `flex items-center gap-2`), theme toggle, collapse button.
+- `bottom-nav.tsx` — Mobile (< lg) fixed bottom tab bar: N+1 equal cells — the user's 1–4 chosen tabs (resolved by `resolveBottomNavIds` from `src/lib/bottom-nav-prefs.ts`, i.e. `UserPreferences.bottomNavIds` or the per-display-mode defaults) plus a fixed "More" cell that opens the drawer. Labels/icons come from `navItems`; the sliding active pill positions itself from `100 / cells`.
 - `brand-logo.tsx` — Inline-SVG brand mark (euro coin + rising chart, money-green) mirroring `public/icons/icon.svg`; gradient id scoped with `useId()` since the sidebar/top-bar/drawer are all mounted at once. Used as the logo in all nav surfaces and the auth pages (replaced the old 💰 emoji).
 
 ### `modals/`
@@ -90,13 +91,25 @@ Context providers wrapped around the app:
 - `toast-provider.tsx` — app-wide toast surface. Mounts one `<Toast>` (bottom-center) in `AppLayout`; use `useToast()` (`success`/`error`/`info`/`show`) instead of per-component `<Toast>` refs. Fire it after every mutation.
 - `celebration-provider.tsx` — `useCelebration().celebrate('checkmark' | 'confetti')`: the celebration overlays (split-expense create / settle-up; see root `AGENTS.md` → "Motion"). The checkmark is a ~900ms badge-pop with an expanding ring + 6-dot burst + check draw (every keyframe uses `forwards` since the overlay unmounts). Mounted inside `ToastProvider` in `AppLayout`; returns `false` under reduced motion so callers fall back to flash-highlight + toast.
 
+### `settings/`
+- `account-panel.tsx` — Settings → Account: change-password form + danger zone (start fresh / delete account); dynamic-imported by the settings page.
+- `mobile-nav-card.tsx` — Settings → General "Mobile navigation" card: pick 1–4 bottom-nav tabs (chip grid over all `navItems`) and drag-reorder them in a preview row driven by `useJiggleReorder`; the greyed trailing "More" cell is never registered with the hook. Persists via `updateBottomNavIds` with optimistic `AppContext.setBottomNavIds` + rollback/toast; "Reset to default" sends `null`.
+
+### `overview/`
+Pieces of the `/overview` wealth dashboard:
+- `banner-stack.tsx` — the page's reminder banners (check-in, Euribor, bank consent, budget) on the shared `AlertBanner`, plus `isCheckInBannerVisible`
+- `kpi-group.tsx` — titled grid section wrapping the `KpiTile`s (Net / Assets / Debts & liabilities)
+- `net-worth-explain-dialog.tsx` — plain-words, row-by-row breakdown of the net-worth sum (opened from the Net Worth tile)
+- `wealth-distribution.tsx` — `WealthDistribution`: "Where your wealth sits", a slim CSS segmented bar + legend of the current asset split (Cash / Investments / Receivables / Home equity / positive Split balance), colored from `charts/wealth-chart.tsx`'s shared `WEALTH_COLORS`. Not a canvas chart, so no `ChartExplain`: the bar is `role="img"` with a generated `aria-label` and the legend/footer repeat it as text. Renders in both display modes.
+- `forecast-vs-actual-card.tsx` — `PlanCheckCard`: "Plan vs reality" (pure engine in `src/lib/forecast-vs-actual.ts`)
+
 ### `reconcile/`
 - `reconcile-wizard.tsx` — Monthly check-in. Advanced mode: 3 steps (Select month → Enter actual balances for all entities → Review variances and confirm), with special handling for debt installments. **Simple mode**: one screen — auto-starts a session on the current month, shows the pre-filled balances list with reassurance copy, and a single "Save check-in" button.
 
 ### `ui/`
 Shared UI components:
 - `command-palette.tsx` — Cmd+K command palette with search, navigation, and action commands (incl. `action-demo-mode` toggle)
-- `jiggle-reorder.tsx` — shared iOS-style jiggle-mode reorder primitive (`useJiggleReorder` hook + `JiggleModeBar` pill); long-press → mode, drag/arrow-keys reorder; wobble on `[data-jiggle-inner]`, drag on `[data-jiggle-item]`; pure math in `src/lib/reorder-utils.ts`. Used by /split (group list) and /bank (account-picker). See root `AGENTS.md` → "Motion".
+- `jiggle-reorder.tsx` — shared iOS-style jiggle-mode reorder primitive (`useJiggleReorder` hook + `JiggleModeBar` pill); long-press → mode, drag/arrow-keys reorder; wobble on `[data-jiggle-inner]`, drag on `[data-jiggle-item]`; pure math in `src/lib/reorder-utils.ts`. Used by /split (group list), /bank (account-picker), and Settings → General (`settings/mobile-nav-card.tsx` bottom-nav tab preview). See root `AGENTS.md` → "Motion".
 - `user-avatar.tsx` — `<UserAvatar>`: renders a user's avatar image (from `/api/avatars/[userId]`) or initials on a deterministic `getAvatarColor` hsl hash (`src/lib/avatar-utils.ts`). Profiles resolved via the `useUserProfiles` hook (`src/lib/hooks/use-user-profiles.ts`, module cache + inflight dedup).
 - `avatar-editor-dialog.tsx` — `AvatarEditorDialog`: drop/paste/browse → EXIF-normalized ≤2048px source → `react-easy-crop` round crop + zoom (lazy-loaded dependency) → 256×256 WebP q0.85 (JPEG fallback), saved via `updateMyAvatar` / admin `updateUser`.
 - `entity-list-drawer.tsx` — Slide-in drawer showing lists of entities by type (cash, investments, receivables, debts) with inline create/edit/archive forms

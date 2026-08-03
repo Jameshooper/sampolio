@@ -7,6 +7,7 @@ import {
 import { getBankConnections } from '@/lib/db/bank-connections';
 import { cachedGetUserPreferences, cachedGetSplitGroupsForUser } from '@/lib/db/cached';
 import { getSplitNotifyConfig } from '@/lib/split-notify';
+import { NAVIGATION_PAGE_IDS, MAX_BOTTOM_NAV_TABS } from '@/lib/bottom-nav-prefs';
 import { updateTag } from 'next/cache';
 import { z } from 'zod';
 import type { ApiResponse, UserPreferences, TaxDefaults, DisplayMode, SplitNotifyEvent } from '@/types';
@@ -242,6 +243,44 @@ export async function updateDisplayMode(
   } catch (error) {
     console.error('Update display mode error:', error);
     return { success: false, error: 'Failed to update display mode' };
+  }
+}
+
+/**
+ * The mobile bottom-nav tabs (1-4 `NavigationPage` ids; "More" is always the
+ * fixed last cell and is never stored). `null` clears the preference back to the
+ * per-display-mode defaults — `dbUpdateUserPreferences` spreads `undefined` and
+ * `JSON.stringify` then drops the key entirely.
+ */
+const bottomNavIdsSchema = z.union([
+  z.array(z.enum(NAVIGATION_PAGE_IDS)).min(1).max(MAX_BOTTOM_NAV_TABS),
+  z.null(),
+]);
+
+export async function updateBottomNavIds(
+  ids: string[] | null
+): Promise<ApiResponse<UserPreferences>> {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return { success: false, error: 'Unauthorized' };
+    }
+    const parsed = bottomNavIdsSchema.safeParse(ids);
+    if (!parsed.success) {
+      return { success: false, error: 'Invalid navigation tabs' };
+    }
+    // The enum already guarantees every id is a real page — only duplicates
+    // need sanitizing (order preserved).
+    const sanitized = parsed.data === null ? undefined : [...new Set(parsed.data)];
+
+    const prefs = await dbUpdateUserPreferences(session.user.id, {
+      bottomNavIds: sanitized,
+    });
+    updateTag(`user:${session.user.id}:preferences`);
+    return { success: true, data: prefs };
+  } catch (error) {
+    console.error('Update bottom nav ids error:', error);
+    return { success: false, error: 'Failed to update navigation tabs' };
   }
 }
 

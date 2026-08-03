@@ -312,7 +312,7 @@ export default function SplitPage() {
         <div className="flex flex-col gap-6 animate-fade-in">
           {/* Across-all-groups summary (only worth showing with ≥2 groups) */}
           {cards.length >= 2 && (
-            <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+            <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-4">
               <div className="flex items-center justify-between gap-3 mb-2">
                 <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Across all groups</h2>
                 {summaryMixed && <span className="text-xs text-gray-400">(mixed currencies)</span>}
@@ -351,7 +351,14 @@ export default function SplitPage() {
                 Reorder groups
               </button>
             )}
-            <div ref={listRef as React.Ref<HTMLDivElement>} {...containerRest} className="flex flex-col gap-3">
+            {/* Jiggle-reorder math is strictly 1-D (item centers from offsetTop),
+                so the grid must collapse to a single column while jiggling —
+                otherwise a 2-column layout scrambles the drag math. */}
+            <div
+              ref={listRef as React.Ref<HTMLDivElement>}
+              {...containerRest}
+              className={jiggling ? 'flex flex-col gap-3' : 'grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch'}
+            >
               {displayCards.map((c) => {
                 const { ref: itemRef, ...itemRest } = getItemProps(c.group.id);
                 return (
@@ -360,11 +367,11 @@ export default function SplitPage() {
                     ref={itemRef as React.Ref<HTMLAnchorElement>}
                     href={`/split/${c.group.id}`}
                     {...itemRest}
-                    className="no-underline block"
+                    className="no-underline block h-full"
                   >
                     <div
                       data-jiggle-inner=""
-                      className="flex items-center gap-3 p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pressable"
+                      className="flex items-center gap-3 p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pressable h-full hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:border-accent-300 dark:hover:border-accent-600"
                     >
                       <span className="text-3xl shrink-0">{c.group.emoji ?? '🧾'}</span>
                       <div className="min-w-0 flex-1">

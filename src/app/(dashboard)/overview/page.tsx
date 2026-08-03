@@ -35,6 +35,7 @@ import { KpiTile } from '@/components/ui/kpi-tile';
 import { BannerStack, isCheckInBannerVisible } from '@/components/overview/banner-stack';
 import { KpiGroup } from '@/components/overview/kpi-group';
 import { NetWorthExplainDialog } from '@/components/overview/net-worth-explain-dialog';
+import { WealthDistribution } from '@/components/overview/wealth-distribution';
 import { plainTerm, helpText } from '@/lib/plain-language';
 import { PlanCheckCard } from '@/components/overview/forecast-vs-actual-card';
 import { MdInfo, MdSync, MdShowChart, MdEuro, MdAccountBalanceWallet, MdBarChart, MdGroup, MdCreditCard, MdArrowForward, MdAddCircle, MdRemoveCircle, MdHouse, MdHomeWork } from 'react-icons/md';
@@ -501,6 +502,10 @@ export default function OverviewPage() {
         return items.slice(0, 5);
     }, [accounts, cashCurrentBalances]);
 
+    // Utilization ratio for the credit-card KPI's progress bar; drives its
+    // color (green/yellow/red) independently of the tile's own `severity`.
+    const cardUtilization = cardCredit ? (cardCredit.limit - cardCredit.available) / cardCredit.limit : null;
+
     if (isLoading) {
         return <KpiGridSkeleton />;
     }
@@ -695,7 +700,8 @@ export default function OverviewPage() {
                                 subline={cardCredit
                                     ? `${formatCurrency(cardCredit.available, displayCurrency)} available of ${formatCurrency(cardCredit.limit, displayCurrency)} limit`
                                     : undefined}
-                                progress={cardCredit ? (cardCredit.limit - cardCredit.available) / cardCredit.limit : undefined}
+                                progress={cardUtilization ?? undefined}
+                                progressSeverity={cardUtilization === null ? undefined : cardUtilization >= 0.8 ? 'danger' : cardUtilization >= 0.5 ? 'warning' : 'success'}
                                 icon={<MdCreditCard />}
                                 severity="danger"
                                 onClick={() => router.push('/bank')}
@@ -724,6 +730,15 @@ export default function OverviewPage() {
                     </KpiGroup>
                 </div>
             )}
+
+            {/* Where the wealth currently sits — shown in BOTH display modes
+                (deliberately outside the chart grid, which Simple mode hides). */}
+            <WealthDistribution
+                values={kpiValues}
+                currency={displayCurrency}
+                isMixedCurrency={isMixedCurrency}
+                isSimple={isSimple}
+            />
 
             {/* Main Chart Section */}
             <div className={`grid grid-cols-1 lg:grid-cols-3 gap-6 ${isSimple ? 'hidden' : ''}`}>

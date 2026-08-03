@@ -26,9 +26,12 @@ interface KpiTileProps {
     icon: React.ReactNode;
     onClick?: () => void;
     severity?: 'info' | 'success' | 'warning' | 'danger';
+    /** Overrides the progress bar's color independently of `severity` (e.g. a
+     *  liability tile whose bar should read green→red by utilization). */
+    progressSeverity?: 'info' | 'success' | 'warning' | 'danger';
 }
 
-export function KpiTile({ title, help, value, currency = 'EUR', change, changeLabel, subline, progress, icon, onClick, severity = 'info' }: KpiTileProps) {
+export function KpiTile({ title, help, value, currency = 'EUR', change, changeLabel, subline, progress, icon, onClick, severity = 'info', progressSeverity }: KpiTileProps) {
     const { theme } = useTheme();
     const isDark = theme === 'dark';
 
@@ -88,7 +91,7 @@ export function KpiTile({ title, help, value, currency = 'EUR', change, changeLa
                     {typeof progress === 'number' && (
                         <div className={`mt-2 h-1.5 w-full max-w-40 overflow-hidden rounded-full ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}>
                             <div
-                                className={`h-full rounded-full ${barColors[severity]}`}
+                                className={`h-full rounded-full ${barColors[progressSeverity ?? severity]}`}
                                 style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
                             />
                         </div>

@@ -110,6 +110,12 @@ export interface UserPreferences {
   // Same semantics as bankAccountOrder: missing ids keep the default
   // (createdAt-desc) order after the ordered ones; stale ids are ignored.
   splitGroupOrder?: string[];
+  // Custom mobile bottom-nav tabs (NavigationPage ids, 1-4; "More" is always
+  // appended as the fixed last cell and is never stored). Applies in BOTH
+  // display modes — an explicit choice overrides Simple-mode slimming (hidden
+  // pages stay reachable via Home's feature grid + the drawer). Undefined ⇒
+  // per-mode defaults (see src/lib/bottom-nav-prefs.ts). Unknown ids ignored on read.
+  bottomNavIds?: NavigationPage[];
   /** Split "new since last visit": groupId → ISO createdAt watermark; moved forward only. */
   splitLastSeenAt?: Record<string, string>;
   updatedAt: string;

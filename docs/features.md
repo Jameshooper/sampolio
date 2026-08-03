@@ -191,14 +191,19 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
 ### UI map
 
 - `/split` (`src/app/(dashboard)/split/page.tsx`, nav "Split") — group list;
-  `group-form-dialog.tsx` creates/edits groups. A group card shows a "new activity"
-  dot when `summary.lastActivityAt > splitLastSeenAt[groupId]` (hidden when the group
-  has no watermark baseline yet) and member `<UserAvatar>`s. The page also renders:
+  `group-form-dialog.tsx` creates/edits groups. Group cards render in a responsive
+  grid (`grid-cols-1 md:grid-cols-2`, single column on mobile) with equal-height
+  cards; each is a clickable `<Link>` with a hover tint/border affordance. A group
+  card shows a "new activity" dot when `summary.lastActivityAt >
+  splitLastSeenAt[groupId]` (hidden when the group has no watermark baseline yet)
+  and member `<UserAvatar>`s. The page also renders:
   - an **"Across all groups" summary card** — the viewer's aggregated pairwise
     position per counterparty (with avatars), from the pure `aggregatePairwiseNets`
     (`src/lib/split-insights.ts`): it sums each group's `suggestSettleUp` output so it
     always agrees with what each group's settle-up screen would say. Cross-currency
-    positions stay separate with a "(mixed currencies)" note.
+    positions stay separate with a "(mixed currencies)" note. Styled with a muted
+    (`bg-gray-50`/`dark:bg-gray-900/40`) surface, distinct from the group cards'
+    white/dark-gray cards, so its non-interactive, aggregate nature reads at a glance.
   - an always-expanded **Insights** section — `getSplitInsights(monthsBack = 12)`
     (`src/lib/actions/split-groups.ts`; cached summaries → overlapping months' chunks →
     the pure `computeSplitInsights`) drives two lazy ECharts: `split-spend-chart.tsx`
@@ -223,7 +228,9 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
   - Group cards **reorder via jiggle mode** (root `AGENTS.md` → "Motion"): a long-press
     enters the mode, drag/drop or arrow keys reorder, and the flat id order persists to
     `UserPreferences.splitGroupOrder` (`updateSplitGroupOrder`, sanitized against the
-    current group ids).
+    current group ids). The jiggle-reorder math is strictly one-dimensional (item
+    centers from `offsetTop`), so the grid collapses to a single column for the
+    duration of jiggle mode and reverts to the 2-up grid once it exits.
 - `/split/[id]` — balance banner, a **"Last 30 days" insights card**
   (`src/components/split/group-period-card.tsx`, between the banner and the recurring
   rules; hidden when the group has no expenses): total spend headline, a segmented
@@ -528,10 +535,11 @@ toggle, and a create/edit dialog (`src/components/goals/goal-dialog.tsx`, RHF +
 `zodResolver(goalSchema)`; the account dropdown appears for `account-balance`
 goals — `goalSchema` superRefines `linkedAccountId` required then — and a manual
 amount input for `manual` goals). Nav entry `goals` in `nav-config.tsx`
-(`MdFlag`; in Advanced mode it lands in the mobile "More" drawer, while in Simple
-mode it's one of the four primary bottom tabs, replacing Overview — see
-`PRIMARY_IDS_SIMPLE` in `bottom-nav.tsx`) and a `nav-goals` command in the
-command palette.
+(`MdFlag`; with the default tabs it lands in the mobile "More" drawer in Advanced
+mode, while in Simple mode it is one of the four default bottom tabs, replacing
+Overview — see `DEFAULT_BOTTOM_NAV_IDS_SIMPLE` in `src/lib/bottom-nav-prefs.ts`;
+either way a user can put it on the bottom bar from Settings → General → Mobile
+navigation) and a `nav-goals` command in the command palette.
 
 **Goal type**: every goal is either a **reserve** (default; money set aside and
 kept — never removed from a projection) or a **spend** goal (an amount you plan to
@@ -785,6 +793,13 @@ own `AGENTS.md` in the same directory has the full breakdown. Summary:
   appears when the net ≠ 0 (see §1) — under Assets when positive, under Debts when
   negative. Clicking a tile opens the `EntityListDrawer`
   (`src/components/ui/entity-list-drawer.tsx`) for create/edit/archive.
+- **Wealth distribution bar** ("Where your wealth sits", `WealthDistribution` in
+  `src/components/overview/wealth-distribution.tsx`): a slim CSS segmented bar + legend
+  below the KPI tiles showing how the current asset total splits across Cash,
+  Investments, Receivables, Home equity and a positive Split balance — colored from the
+  shared `WEALTH_COLORS` map, `role="img"` with a generated `aria-label` (no
+  `ChartExplain`, since it is not a canvas chart), shown in **both** display modes, with
+  a footer sentence reconciling assets minus debts/cards/owed-split to the Net Worth KPI.
 - **Banners** (all via the shared `AlertBanner` in `BannerStack`,
   `src/components/overview/banner-stack.tsx`): monthly **check-in due** (no snapshot
   for the current month, or months behind the last one — opens the reconciliation

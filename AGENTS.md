@@ -46,9 +46,9 @@ src/
 │   ├── onboarding/                        # Onboarding wizard
 │   ├── providers/                         # Theme, PrimeReact, Session, Celebration providers, ServiceWorkerRegister (PWA)
 │   ├── cashflow/                          # Cashflow page pieces (collapsing header, month strip, details panel, projection table)
-│   ├── overview/                          # Overview pieces (BannerStack, KpiGroup, plan-check card, net-worth explain dialog)
+│   ├── overview/                          # Overview pieces (BannerStack, KpiGroup, plan-check card, net-worth explain dialog, wealth-distribution bar)
 │   ├── reconcile/                         # Reconciliation wizard
-│   ├── settings/                          # account-panel.tsx: change-password form + danger zone (start fresh / delete account), rendered in Settings → Account
+│   ├── settings/                          # account-panel.tsx: change-password form + danger zone (start fresh / delete account), rendered in Settings → Account; mobile-nav-card.tsx: bottom-nav tab picker (Settings → General)
 │   └── ui/                               # Shared UI (CommandPalette, EntityListDrawer, debt-progress-card, jiggle-reorder, user-avatar, avatar-editor-dialog, etc.)
 ├── lib/
 │   ├── actions/                           # Server actions (all backend logic)
@@ -74,7 +74,7 @@ src/
 │   │   ├── maintenance.ts                 # History compaction preview/run (data pruning)
 │   │   ├── auth.ts                        # Sign-up, signup-enabled check
 │   │   ├── account.ts                     # Self-service: changeMyPassword, getAccountDeletionPreflight, deleteMyAccount, resetMyData
-│   │   ├── user-preferences.ts            # User preferences CRUD (incl. updateSplitGroupOrder)
+│   │   ├── user-preferences.ts            # User preferences CRUD (incl. updateSplitGroupOrder, updateBottomNavIds)
 │   │   ├── user-profiles.ts               # getUserProfiles: {id,name,avatarUrl?} for any authenticated user (no email/role)
 │   │   ├── euribor.ts                     # ECB Data Portal 12m-Euribor prefill fetch (graceful failure, in-memory TTL)
 │   │   └── app-info.ts                    # App version info
@@ -168,6 +168,7 @@ src/
 │   ├── checkin-utils.ts                   # Pure isCheckInDue (shared by Overview banner + local notification)
 │   ├── bank-split-match.ts                # Pure bank-tx↔split-expense matcher ("already split" flags; unit-tested)
 │   ├── reorder-utils.ts                   # Pure jiggle-reorder math (arrayMove, targetIndexFromCenters, siblingOffsets, sortByPreferredOrder; unit-tested)
+│   ├── bottom-nav-prefs.ts                # Pure mobile bottom-nav tab resolution (NAVIGATION_PAGE_IDS, per-mode defaults, resolveBottomNavIds/toggleBottomNavId; unit-tested)
 │   ├── avatar-utils.ts                    # Pure avatar helpers (deterministic getAvatarColor hsl hash, initials; unit-tested)
 │   ├── demo-mode.ts                       # UI-only money-masking flag (setDemoMask/isDemoMasked, maskMoney, isDemoExemptPath); zero imports
 │   └── constants.ts                       # Currencies, frequencies, categories, formatters
@@ -323,9 +324,10 @@ motion library), and it must never gate input. The primitives:
   a11y-complete. The wobble (`jiggle-wobble`, ±1deg infinite) lives on the inner
   `[data-jiggle-inner]` element while the drag translate lives on the outer `[data-jiggle-item]`,
   so the two transforms never collide. Non-passive native `touchmove` `preventDefault` keeps the
-  drag from scrolling the page. Used by **/split** (group list → `UserPreferences.splitGroupOrder`)
-  and **/bank** (one shared mode across two rows — connection tabs + accounts within the active
-  connection → `bankAccountOrder`). Skipped entirely under reduced motion (the hook bails via
+  drag from scrolling the page. Used by **/split** (group list → `UserPreferences.splitGroupOrder`),
+  **/bank** (one shared mode across two rows — connection tabs + accounts within the active
+  connection → `bankAccountOrder`), and **Settings → General → Mobile navigation**
+  (`mobile-nav-card.tsx` bottom-nav tab preview → `bottomNavIds`). Skipped entirely under reduced motion (the hook bails via
   `useReducedMotion()` and the CSS wobble is killed).
 - **Celebrations** — `useCelebration().celebrate('checkmark' | 'confetti')`
   (`src/components/providers/celebration-provider.tsx`, mounted inside `ToastProvider` in
@@ -343,7 +345,7 @@ motion library), and it must never gate input. The primitives:
 - **Do NOT**: `transition: all`, animating height/width/filter/backdrop-filter, effects >250ms
   (except the three sanctioned exceptions above), count-up on money values, exit animations on
   optimistic deletes or overlay close, list stagger, press effects on inputs. The bottom-nav active pill (`bottom-nav.tsx`) is the one sanctioned
-  positional animation (5 equal cells, `left` calc); its `<nav>` must stay `fixed` **without**
+  positional animation (N+1 equal user-chosen cells, `left` calc from `100 / cells`); its `<nav>` must stay `fixed` **without**
   `relative` (fixed already anchors the absolute pill; `relative` would win the cascade and
   un-fix the bar). Don't touch `.progressbar-instant` or `flash-highlight`. In CSS comments,
   never write a star-followed-by-slash glob (e.g. spell `--motion-{fast,base,slow}`) — it closes
@@ -365,10 +367,13 @@ mode, read from `useAppContext().displayMode`. Conventions:
   advanced charts hidden), Settings (Data & Storage + Admin tabs hidden), and the reconcile wizard
   (one-screen check-in: auto-starts on the current month, single "Save check-in" button).
 - **Nav slimming**: nav entries carry `simpleModeVisible` in `nav-config.tsx`; every surface renders
-  from `useVisibleNavItems()` (sidebar, drawer) or `PRIMARY_IDS_SIMPLE` (bottom-nav, which swaps
-  Overview for Goals). Simple mode shows Home, Split, Cashflow, Goals, Settings; everything else
+  from `useVisibleNavItems()` (sidebar, drawer) or, for the bottom-nav, from
+  `resolveBottomNavIds()` — whose per-mode defaults `DEFAULT_BOTTOM_NAV_IDS` /
+  `DEFAULT_BOTTOM_NAV_IDS_SIMPLE` (`src/lib/bottom-nav-prefs.ts`) swap Overview for Goals in
+  Simple mode. Simple mode shows Home, Split, Cashflow, Goals, Settings; everything else
   stays reachable from Home's feature grid (which deliberately lists **all** `navItems`) and the
-  command palette.
+  command palette. A user's own bottom-nav pick (`UserPreferences.bottomNavIds`, chosen in
+  Settings → General → Mobile navigation) overrides the default in BOTH modes.
 - **Explain-the-number dialogs**: the Home glance tile and the Overview Net Worth KPI open
   plain-words breakdowns (`home-dashboard.tsx` dialog, `net-worth-explain-dialog.tsx`) built from
   data already on the page — display-only, in both modes.
@@ -421,7 +426,7 @@ only their axis/label/tooltip text masks. Mechanism (`src/lib/demo-mode.ts`):
 **Every new page, component, and interface MUST be responsive** — it has to look and work well on a phone (~375px wide) *and* on desktop, with no horizontal overflow. This is a hard requirement, not a nice-to-have. Always check both a mobile (~390px) and a desktop (~1280px) breakpoint before considering UI work done (the `preview_*` tools + `preview_resize` make this easy — assert `document.documentElement.scrollWidth <= window.innerWidth`). The app is also an **installable PWA** (Add to Home Screen on iOS/Android/desktop).
 
 - **Breakpoint switch — Tailwind `lg` (1024px)**: below `lg` = mobile chrome, at/above `lg` = the desktop sidebar layout. **Drive visibility with CSS** (`lg:hidden` / `hidden lg:block`) to stay hydration-safe and avoid flashes; only use the SSR-safe `useIsMobile()` / `useMediaQuery()` hook (`src/lib/hooks/use-media-query.ts`) when logic must branch (which component to mount, a numeric prop, `maximized={isMobile}`).
-- **Navigation chrome**: desktop uses the fixed collapsible `SidebarNav` (`hidden lg:flex`); mobile uses `MobileTopBar` (hamburger + brand + search; the monthly check-in deliberately lives on Overview, not in the chrome), `BottomNav` (4 primary tabs + "More"), and `MobileNavDrawer` (PrimeReact `Sidebar`, the full menu). All four nav surfaces read the **shared `src/components/layout/nav-config.tsx`** (`navItems`, `isNavItemActive`, `useUserMenuItems`) — add a nav entry there, never in one surface only. The sidebar/drawer user button renders the user's `UserAvatar` (not a generic icon), and the user-menu's avatar+name+email header item navigates to `/settings?tab=account` — the Settings page maps a `?tab=` slug to the index of its *rendered* tabs (Simple mode hides some), unknown slug ⇒ first tab. `<main>` uses `lg:ml-16`/`lg:ml-64` (no base margin) + top/bottom padding for the mobile bars, all with `env(safe-area-inset-*)` so the iPhone notch / home indicator are respected (root `viewport` sets `viewport-fit=cover`). Mobile chrome (`MobileTopBar`, `BottomNav`) is `z-40`; the desktop `SidebarNav` and PrimeReact/command-palette overlays sit at `z-50`+.
+- **Navigation chrome**: desktop uses the fixed collapsible `SidebarNav` (`hidden lg:flex`); mobile uses `MobileTopBar` (hamburger + brand + search; the monthly check-in deliberately lives on Overview, not in the chrome), `BottomNav` (1–4 user-chosen tabs + a fixed "More"; see `src/lib/bottom-nav-prefs.ts`), and `MobileNavDrawer` (PrimeReact `Sidebar`, the full menu). All four nav surfaces read the **shared `src/components/layout/nav-config.tsx`** (`navItems`, `isNavItemActive`, `useUserMenuItems`) — add a nav entry there, never in one surface only. The sidebar/drawer user button renders the user's `UserAvatar` (not a generic icon), and the user-menu's avatar+name+email header item navigates to `/settings?tab=account` — the Settings page maps a `?tab=` slug to the index of its *rendered* tabs (Simple mode hides some), unknown slug ⇒ first tab. `<main>` uses `lg:ml-16`/`lg:ml-64` (no base margin) + top/bottom padding for the mobile bars, all with `env(safe-area-inset-*)` so the iPhone notch / home indicator are respected (root `viewport` sets `viewport-fit=cover`). Mobile chrome (`MobileTopBar`, `BottomNav`) is `z-40`; the desktop `SidebarNav` and PrimeReact/command-palette overlays sit at `z-50`+.
 - **Dialogs**: a global mobile cap in `globals.css` (`@media (max-width:640px)` → `.p-dialog { width:95vw; max-width:95vw; max-height:calc(92vh − safe-area insets) }` + scrollable content) fixes **every** PrimeReact `Dialog` at once — you normally don't need per-dialog responsive props. For genuinely huge wizards, `maximized={isMobile}` is an option (the 95vw cap turns "maximized" into a tall centered box; the inset-aware `max-height` keeps its header clear of the dynamic island in the installed PWA).
 - **Overlay safe-area insets (installed PWA)**: portalled overlays render at the viewport edges (`viewport-fit=cover`), so `globals.css` pads them for `env(safe-area-inset-*)`. Off-canvas drawers (PrimeReact `Sidebar`) get top/bottom/side padding so the header clears the island and the footer clears the home indicator — **the position class lives on the `.p-sidebar-mask`, the panel is its child**, so target `.p-sidebar-mask.p-sidebar-left > .p-sidebar` (not `.p-sidebar.p-sidebar-left`, which matches nothing). Top-anchored `Toast`s drop below the island. Sticky in-page headers must pin **below** the mobile top bar (`sticky top-[calc(3.5rem+env(safe-area-inset-top))] lg:top-[env(safe-area-inset-top)]`), never `top-0` — the `lg:` offset matters because a **desktop-breakpoint installed PWA (iPad)** also runs edge-to-edge under the OS status bar with no mobile top bar to clear it. For the same reason `<main>` keeps `lg:pt-[env(safe-area-inset-top)]`/`lg:pb-[env(safe-area-inset-bottom)]` (not `lg:pt-0`), the desktop `SidebarNav` aside pads itself with both insets, and `AppLayout` paints a fixed `hidden lg:block` glass strip of height `env(safe-area-inset-top)` under the status bar so scrolled content never shows through it (all of these are 0 in a normal desktop browser).
 - **Tables (mixed strategy)**: lighter tables (e.g. cashflow projection, bank ledger) render a `lg:hidden` card/list view beside a `hidden lg:block` DataTable; the wide mortgage ledger keeps a single DataTable with a **frozen first column** (`frozen alignFrozen="left"` + `scrollable`) for horizontal scroll. Don't let a raw wide table overflow the viewport.
@@ -628,7 +633,7 @@ All types are centralized in `src/types/index.ts`. Key types:
 ## Adding a New Page
 
 1. Create directory under `src/app/(dashboard)/` with `page.tsx` (the group layout wraps it in `AppLayout` **and** performs the server-side `auth()` redirect — do **not** wrap or re-guard it yourself).
-2. Add the page's id to the `NavigationPage` union in `src/types/index.ts`, then a nav entry in the shared **`src/components/layout/nav-config.tsx`** (`navItems`) — all four nav surfaces (sidebar, bottom-nav, drawer, and the mobile primary tabs via `bottom-nav.tsx` `PRIMARY_IDS`/`PRIMARY_IDS_SIMPLE`) read from it. Never edit one surface only. Decide whether the page belongs in Simple mode's slimmed nav (`simpleModeVisible: true`) — hidden pages stay reachable from Home's feature grid.
+2. Add the page's id to the `NavigationPage` union in `src/types/index.ts`, then a nav entry in the shared **`src/components/layout/nav-config.tsx`** (`navItems`) — all four nav surfaces (sidebar, bottom-nav, drawer, and the mobile tab defaults via `src/lib/bottom-nav-prefs.ts`) read from it. Never edit one surface only. Add the id to `NAVIGATION_PAGE_IDS` in `bottom-nav-prefs.ts` too (its compile-time guard fails otherwise) so the page becomes selectable in the Settings → General → Mobile navigation picker; changing `DEFAULT_BOTTOM_NAV_IDS`/`DEFAULT_BOTTOM_NAV_IDS_SIMPLE` is a separate, deliberate call. Decide whether the page belongs in Simple mode's slimmed nav (`simpleModeVisible: true`) — hidden pages stay reachable from Home's feature grid.
 3. Add command-palette entries in `src/components/ui/command-palette.tsx` (a `nav-*` command + its path in the `executeCommand` `paths` map).
 4. Add the URL prefix to `PROTECTED_PREFIXES` in `src/proxy.ts` so the edge middleware redirects cookie-less visitors before the page shell loads.
 

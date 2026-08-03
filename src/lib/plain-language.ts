@@ -48,6 +48,11 @@ export const PLAIN_TERMS = {
         plain: 'Card limit used',
         help: 'How much of your credit card limit is currently in use.',
     },
+    wealthMix: {
+        term: 'Wealth distribution',
+        plain: 'Where your wealth sits',
+        help: 'How your total wealth is divided across cash, investments, your home, and other assets.',
+    },
     homeEquity: {
         term: 'Home equity',
         plain: 'Your share of the home',
