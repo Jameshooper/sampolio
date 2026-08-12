@@ -21,6 +21,11 @@
  * references `BankTransaction.id`, so every promotion/refresh path preserves the
  * stored row's `id` (a fetch mints a fresh uuid for every mapped row).
  *
+ * The structured `referenceNumber`/`referenceNumberSchema` are display-only: they
+ * are deliberately OUTSIDE the key (a row that gains or loses one must not split
+ * into two), and every merge path coalesces them like the dates, so a later fetch
+ * that omits them never wipes what the bank told us once.
+ *
  * Even so a pending row can strand — the booked twin may fall outside the fuzzy
  * bounds, or the pending may simply have been cancelled. To stop those phantoms
  * accumulating, pass the fetched `window` to `mergeTransactions`: a fetch returns
@@ -192,8 +197,8 @@ export function mergeTransactions(
         continue;
       }
       // Same identity → refresh fields, preserving the stored id/firstSeenAt and
-      // any date the incoming row omits (the mapper always sets those keys, so a
-      // bare spread would wipe them with undefined).
+      // any date or reference the incoming row omits (the mapper always sets those
+      // keys, so a bare spread would wipe them with undefined).
       byKey.set(inc.dedupKey, {
         ...prior,
         ...inc,
@@ -202,6 +207,8 @@ export function mergeTransactions(
         lastSeenAt: nowIso,
         transactionDate: inc.transactionDate ?? prior.transactionDate,
         valueDate: inc.valueDate ?? prior.valueDate,
+        referenceNumber: inc.referenceNumber ?? prior.referenceNumber,
+        referenceNumberSchema: inc.referenceNumberSchema ?? prior.referenceNumberSchema,
       });
       confirmed.add(inc.dedupKey);
       updated++;
@@ -223,6 +230,8 @@ export function mergeTransactions(
           // A booked row often drops the purchase date the pending carried.
           transactionDate:
             inc.transactionDate ?? priorPending.transactionDate ?? priorPending.bookingDate,
+          referenceNumber: inc.referenceNumber ?? priorPending.referenceNumber,
+          referenceNumberSchema: inc.referenceNumberSchema ?? priorPending.referenceNumberSchema,
         });
         confirmed.add(inc.dedupKey);
         updated++;
@@ -243,6 +252,8 @@ export function mergeTransactions(
           firstSeenAt: match.firstSeenAt,
           lastSeenAt: nowIso,
           transactionDate: inc.transactionDate ?? match.transactionDate ?? match.bookingDate,
+          referenceNumber: inc.referenceNumber ?? match.referenceNumber,
+          referenceNumberSchema: inc.referenceNumberSchema ?? match.referenceNumberSchema,
         });
         confirmed.add(inc.dedupKey);
         updated++;

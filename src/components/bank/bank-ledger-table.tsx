@@ -50,12 +50,17 @@ const MONTHS_STEP = 6;
 const INITIAL_ROWS = 50;
 const ROWS_STEP = 50;
 
-/** Case-insensitive match on counterparty, remittance info, or amount digits. */
+/**
+ * Case-insensitive match on counterparty, remittance info, the structured
+ * reference number (Finnish viitenumero — how an invoice is usually looked up),
+ * or amount digits.
+ */
 function matchesQuery(t: BankTransaction, q: string): boolean {
   if (!q) return true;
   const needle = q.toLowerCase();
   if (t.counterpartyName?.toLowerCase().includes(needle)) return true;
   if (t.remittanceInfo?.toLowerCase().includes(needle)) return true;
+  if (t.referenceNumber?.toLowerCase().includes(needle)) return true;
   // Amount search: compare against both '.'- and ','-decimal renderings.
   const abs = Math.abs(t.amount);
   if (abs.toFixed(2).includes(needle.replace(',', '.'))) return true;
@@ -382,6 +387,14 @@ export function BankLedgerTable({
       )}
       {detailRow('Note', t.note)}
       {detailRow('Bank reference', t.entryReference)}
+      {detailRow(
+        'Reference number',
+        t.referenceNumber
+          ? t.referenceNumberSchema
+            ? `${t.referenceNumber} (${t.referenceNumberSchema})`
+            : t.referenceNumber
+          : undefined
+      )}
       <div className="flex gap-2">
         <span className="opacity-60 w-40 shrink-0">First seen</span>
         <span>{new Date(t.firstSeenAt).toLocaleString('en-GB')}</span>

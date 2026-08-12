@@ -316,6 +316,10 @@ export function BankConnectionsPanel() {
                   ? `Last synced ${new Date(conn.lastSyncAt).toLocaleString('en-GB')} · ${conn.lastSyncStatus ?? ''}`
                   : 'Not synced yet'}
                 {expiry.expiresAt && ` · consent valid until ${expiry.expiresAt.toLocaleDateString('en-GB')}`}
+                {/* The bank's own ceiling on consent length — makes it obvious
+                    whether a short consent is the bank's rule or our request. */}
+                {conn.aspspMaxConsentValiditySeconds != null &&
+                  ` · bank max ${Math.round(conn.aspspMaxConsentValiditySeconds / 86400)}d`}
               </p>
 
               {conn.linkedAccounts.length === 0 && (

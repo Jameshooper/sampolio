@@ -20,14 +20,56 @@ import {
   writeBankSessionSecret,
   findConnectionByState,
 } from '@/lib/db/bank-connections';
-import { startAuthorization, createSession } from './client';
+import { startAuthorization, createSession, BankApiError, type StartAuthorizationInput } from './client';
 import { mapSessionAccounts } from './mappers';
 import { reconcileLinks } from './reconcile-links';
-import { sessionResponseSchema } from '@/lib/schemas/bank.schema';
-import { getBankConfig, CONSENT_REQUESTED_VALIDITY_DAYS } from './constants';
+import { findAspspInfo } from './aspsp-info';
+import { computeConsentValidUntil } from './consent-validity';
+import { authResponseSchema, sessionResponseSchema } from '@/lib/schemas/bank.schema';
+import { getBankConfig, CONSENT_REQUESTED_VALIDITY_DAYS, isBankSyncVerbose } from './constants';
 import { runSync } from './sync';
 
 const MS_PER_DAY = 86_400_000;
+
+/**
+ * `POST /auth` behind the one Zod check the flow actually depends on (the URL
+ * to redirect the user to, and the authorization id we store to correlate the
+ * callback). `startAuthorization` itself returns raw `unknown` — this is the
+ * single place that validates it, shared by begin/beginReconnect (hygiene D:
+ * `authResponseSchema` existed but was unused before this change).
+ */
+async function requestAuthorization(
+  input: StartAuthorizationInput
+): Promise<{ url: string; authorization_id: string }> {
+  const raw = await startAuthorization(input);
+  const parsed = authResponseSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new BankApiError('BAD_RESPONSE', 'Malformed authorization response');
+  }
+  return parsed.data;
+}
+
+/**
+ * The `access.valid_until` to request plus the value to persist on the
+ * connection for display — looks up the bank's own `maximum_consent_validity`
+ * (best-effort; a lookup failure degrades to today's flat 180-day request)
+ * and logs its `requiredPsuHeaders` under the verbose flag (header names
+ * only — safe to log).
+ */
+async function resolveConsentRequest(
+  aspspName: string,
+  aspspCountry: string
+): Promise<{ validUntilIso: string; aspspMaxConsentValiditySeconds: number | undefined }> {
+  const info = await findAspspInfo(aspspName, aspspCountry);
+  const { validUntilIso } = computeConsentValidUntil(Date.now(), info?.maximumConsentValiditySeconds);
+  if (isBankSyncVerbose() && info?.requiredPsuHeaders?.length) {
+    console.log(
+      `[bank] ${aspspName} (${aspspCountry}) required PSU headers:`,
+      info.requiredPsuHeaders.join(', ')
+    );
+  }
+  return { validUntilIso, aspspMaxConsentValiditySeconds: info?.maximumConsentValiditySeconds };
+}
 
 function invalidate(userId: string, connectionId: string): void {
   // `updateTag` works in server actions but can throw in a GET route handler
@@ -67,11 +109,12 @@ export async function beginConnection(
   });
 
   const state = crypto.randomBytes(32).toString('hex');
-  const validUntilIso = new Date(
-    Date.now() + CONSENT_REQUESTED_VALIDITY_DAYS * MS_PER_DAY
-  ).toISOString();
+  const { validUntilIso, aspspMaxConsentValiditySeconds } = await resolveConsentRequest(
+    aspspName,
+    aspspCountry
+  );
 
-  const { url, authorization_id } = await startAuthorization({
+  const { url, authorization_id } = await requestAuthorization({
     aspspName,
     aspspCountry,
     state,
@@ -86,6 +129,12 @@ export async function beginConnection(
     authorizationId: authorization_id,
     createdAt: new Date().toISOString(),
   });
+
+  // Best-effort — display/debug only, so a bank with no `maximum_consent_validity`
+  // simply leaves the field unset rather than blocking the connection.
+  if (aspspMaxConsentValiditySeconds !== undefined) {
+    await updateBankConnection(userId, connection.id, { aspspMaxConsentValiditySeconds });
+  }
 
   invalidate(userId, connection.id);
   return { authUrl: url, connectionId: connection.id };
@@ -111,11 +160,12 @@ export async function beginReconnect(
   if (!connection) throw new Error('Connection not found');
 
   const state = crypto.randomBytes(32).toString('hex');
-  const validUntilIso = new Date(
-    Date.now() + CONSENT_REQUESTED_VALIDITY_DAYS * MS_PER_DAY
-  ).toISOString();
+  const { validUntilIso, aspspMaxConsentValiditySeconds } = await resolveConsentRequest(
+    connection.aspspName,
+    connection.aspspCountry
+  );
 
-  const { url, authorization_id } = await startAuthorization({
+  const { url, authorization_id } = await requestAuthorization({
     aspspName: connection.aspspName,
     aspspCountry: connection.aspspCountry,
     state,
@@ -131,6 +181,12 @@ export async function beginReconnect(
     createdAt: new Date().toISOString(),
   });
 
+  // Refresh the stored figure too — a bank's published max can change, and a
+  // lookup failure here simply leaves the previous value in place.
+  if (aspspMaxConsentValiditySeconds !== undefined) {
+    await updateBankConnection(userId, connection.id, { aspspMaxConsentValiditySeconds });
+  }
+
   invalidate(userId, connection.id);
   return { authUrl: url, connectionId: connection.id };
 }
@@ -144,7 +200,7 @@ export async function completeConnection(
   userId: string,
   code: string,
   state: string,
-  psuIp?: string
+  psu?: { psuIp?: string; psuUserAgent?: string }
 ): Promise<{ connection: BankConnection } | null> {
   const match = await findConnectionByState(userId, state);
   if (!match) return null; // unknown/replayed state — reject
@@ -196,11 +252,14 @@ export async function completeConnection(
   // on settings with data already present. On a first connect this is the deep
   // ~24-month backfill; on a renewal `reconcileLinks` has cleared the backfill
   // marker so it re-runs the deep backfill too (we're inside the fresh-session
-  // window). The PSU is right here, so pass their IP for the higher rate
-  // allowance. A backfill failure must never fail the consent itself — the
-  // scheduler/Refresh-now will retry.
+  // window). The PSU is right here, so pass their IP + user agent for the
+  // higher rate allowance. A backfill failure must never fail the consent
+  // itself — the scheduler/Refresh-now will retry.
   try {
-    await runSync(userId, connection.id, 'callback-backfill', { psuIp });
+    await runSync(userId, connection.id, 'callback-backfill', {
+      psuIp: psu?.psuIp,
+      psuUserAgent: psu?.psuUserAgent,
+    });
   } catch (err) {
     console.error('[bank] backfill after consent failed:', err);
   }

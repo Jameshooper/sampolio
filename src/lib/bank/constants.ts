@@ -19,10 +19,28 @@ export const JWT_TTL_SECONDS = 23 * 60 * 60; // 23h, a margin under the 24h cap
 /** Re-mint this long before expiry so a request never races the boundary. */
 export const JWT_REMINT_SKEW_SECONDS = 5 * 60;
 
-/** Consent (Layer B) — how long an access we request (bank may shorten it). */
+/**
+ * Consent (Layer B) — how long an access we request (bank may shorten it).
+ * This is now the FALLBACK used when a bank's own `maximum_consent_validity`
+ * (from `GET /aspsps`) is unknown or unusable — see `consent-validity.ts`.
+ */
 export const CONSENT_REQUESTED_VALIDITY_DAYS = 180;
+/**
+ * Hard ceiling on what we ever request, even when a bank's own
+ * `maximum_consent_validity` would allow more — we don't want to hold a
+ * consent indefinitely just because the ASPSP permits it.
+ */
+export const CONSENT_MAX_REQUESTED_VALIDITY_DAYS = 365;
 /** Warn the user this many days before the consent expires. */
 export const CONSENT_EXPIRY_WARNING_DAYS = 14;
+
+/**
+ * TTL for the in-memory `GET /aspsps` cache (`aspsp-info.ts`), keyed per
+ * country. The bank list + their consent-validity/PSU-header capabilities
+ * change rarely, so a few hours of staleness is harmless and saves a
+ * (EB-side, no-ASPSP-allowance) round trip on every connect/reconnect.
+ */
+export const ASPSP_INFO_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 
 /**
  * Transaction windows. The cashflow page now models the past (the bank-actuals
@@ -63,7 +81,8 @@ export const STATEMENT_GRACE_DAYS = 18;
  * Rate budget — the documented ASPSP limit is ~4 fetches per day PER ACCOUNT,
  * but that ceiling applies only to *unattended* fetches: a background
  * scheduled sync carries no PSU identity. A manual "Refresh now" is attended —
- * it sends the requester's IP as `PSU-IP-Address` — and is exempt from this
+ * it sends the requester's IP (+ user agent) as `Psu-Ip-Address`/`Psu-User-Agent`
+ * — and is exempt from this
  * limit entirely, so it never draws from this budget. We schedule
  * `MAX_SCHEDULED_FETCHES_PER_DAY` unattended fetches/day and reserve
  * `RESERVED_RETRY_FETCHES` as headroom for an unattended *retry* re-run (e.g.

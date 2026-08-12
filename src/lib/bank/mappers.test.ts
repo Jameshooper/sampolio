@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   mapAspsps,
+  mapAspspDetails,
   mapSessionAccounts,
-  mapSessionAccountHashes,
+  mapSessionDetails,
   mapBalances,
   pickAnchorBalance,
   pickCardBalances,
   mapTransactions,
   inferAccountRole,
+  terminalSessionStatus,
   toCurrency,
 } from './mappers';
 
@@ -34,9 +36,93 @@ describe('inferAccountRole', () => {
 
 describe('mapAspsps', () => {
   it('maps and uppercases country', () => {
-    expect(mapAspsps({ aspsps: [{ name: 'Nordea', country: 'fi' }, { country: 'FI' }] })).toEqual([
-      { name: 'Nordea', country: 'FI' },
+    expect(mapAspsps({ aspsps: [{ name: 'Example Bank', country: 'fi' }, { country: 'FI' }] })).toEqual([
+      { name: 'Example Bank', country: 'FI' },
     ]);
+  });
+});
+
+describe('mapAspspDetails', () => {
+  it('maps the consent-validity ceiling and required PSU headers', () => {
+    const out = mapAspspDetails({
+      aspsps: [
+        {
+          name: 'Example Bank',
+          country: 'fi',
+          maximum_consent_validity: 15552000, // 180d, as Nordea FI reports
+          required_psu_headers: ['Psu-Ip-Address', 'Psu-User-Agent'],
+        },
+      ],
+    });
+    expect(out).toEqual([
+      {
+        name: 'Example Bank',
+        country: 'FI',
+        maximumConsentValiditySeconds: 15552000,
+        requiredPsuHeaders: ['Psu-Ip-Address', 'Psu-User-Agent'],
+      },
+    ]);
+  });
+
+  it('parses a numeric-string validity', () => {
+    const out = mapAspspDetails({ aspsps: [{ name: 'B', country: 'FI', maximum_consent_validity: '7776000' }] });
+    expect(out[0].maximumConsentValiditySeconds).toBe(7776000);
+  });
+
+  it('drops a missing, non-positive or unparseable validity', () => {
+    const out = mapAspspDetails({
+      aspsps: [
+        { name: 'A', country: 'FI' },
+        { name: 'B', country: 'FI', maximum_consent_validity: 0 },
+        { name: 'C', country: 'FI', maximum_consent_validity: -100 },
+        { name: 'D', country: 'FI', maximum_consent_validity: 'not-a-number' },
+        { name: 'E', country: 'FI', maximum_consent_validity: null },
+      ],
+    });
+    expect(out.map((a) => a.maximumConsentValiditySeconds)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('tolerates garbage headers, nameless entries and malformed input', () => {
+    const out = mapAspspDetails({
+      aspsps: [
+        { name: 'A', country: 'FI', required_psu_headers: 'not-an-array' },
+        { name: 'B', country: 'FI', required_psu_headers: [] },
+        { country: 'FI' }, // no name → dropped
+        null,
+      ],
+    });
+    expect(out).toHaveLength(2);
+    expect(out[0].requiredPsuHeaders).toBeUndefined();
+    expect(out[1].requiredPsuHeaders).toBeUndefined();
+    expect(mapAspspDetails(undefined)).toEqual([]);
+    expect(mapAspspDetails({})).toEqual([]);
+    expect(mapAspspDetails({ aspsps: 'not-an-array' })).toEqual([]);
+  });
+});
+
+describe('terminalSessionStatus', () => {
+  it('maps REVOKED to revoked', () => {
+    expect(terminalSessionStatus('REVOKED')).toBe('revoked');
+    expect(terminalSessionStatus('revoked')).toBe('revoked');
+  });
+
+  it('maps the lifecycle-end statuses to expired', () => {
+    expect(terminalSessionStatus('EXPIRED')).toBe('expired');
+    expect(terminalSessionStatus('CLOSED')).toBe('expired');
+    expect(terminalSessionStatus('CANCELLED')).toBe('expired');
+  });
+
+  it('returns null for live, unknown or missing statuses', () => {
+    expect(terminalSessionStatus('AUTHORIZED')).toBeNull();
+    expect(terminalSessionStatus('SOME_FUTURE_ENUM')).toBeNull();
+    expect(terminalSessionStatus('')).toBeNull();
+    expect(terminalSessionStatus(undefined)).toBeNull();
   });
 });
 
@@ -64,25 +150,58 @@ describe('mapSessionAccounts', () => {
     expect(out[0].identificationHash).toBe('hash-1');
     expect(out[1].identificationHash).toBeUndefined();
   });
+
+  it('maps identification_hashes and folds the singular hash into the set', () => {
+    const out = mapSessionAccounts({
+      accounts: [
+        {
+          uid: 'u1',
+          identification_hash: 'hash-primary',
+          identification_hashes: ['hash-iban', 'hash-bban'],
+          currency: 'EUR',
+          cash_account_type: 'CACC',
+        },
+        // Singular only (a bank/session that doesn't send the array yet).
+        { uid: 'u2', identification_hash: 'hash-solo', currency: 'EUR', cash_account_type: 'CARD' },
+      ],
+    });
+    expect(out[0].identificationHashes).toEqual(['hash-iban', 'hash-bban', 'hash-primary']);
+    expect(out[1].identificationHashes).toEqual(['hash-solo']);
+  });
+
+  it('treats an empty or garbage hashes array as absent', () => {
+    const out = mapSessionAccounts({
+      accounts: [
+        { uid: 'u1', identification_hashes: [], currency: 'EUR' },
+        { uid: 'u2', identification_hashes: 'not-an-array' as unknown as string[], currency: 'EUR' },
+        { uid: 'u3', identification_hashes: [null, '', 42] as unknown as string[], currency: 'EUR' },
+      ],
+    });
+    expect(out[0].identificationHashes).toBeUndefined();
+    expect(out[1].identificationHashes).toBeUndefined();
+    expect(out[2].identificationHashes).toBeUndefined();
+  });
 });
 
-describe('mapSessionAccountHashes', () => {
-  it('extracts uid + identification_hash pairs from accounts_data', () => {
-    const out = mapSessionAccountHashes({
+describe('mapSessionDetails', () => {
+  it('extracts the session status and each account uid + hash(es)', () => {
+    const out = mapSessionDetails({
+      status: 'AUTHORIZED',
       accounts_data: [
-        { uid: 'u1', identification_hash: 'hash-1' },
+        { uid: 'u1', identification_hash: 'hash-1', identification_hashes: ['hash-1', 'hash-1b'] },
         { uid: 'u2', identification_hash: 'hash-2' },
       ],
     });
-    expect(out).toEqual([
-      { uid: 'u1', identificationHash: 'hash-1' },
-      { uid: 'u2', identificationHash: 'hash-2' },
+    expect(out.status).toBe('AUTHORIZED');
+    expect(out.accounts).toEqual([
+      { uid: 'u1', identificationHash: 'hash-1', identificationHashes: ['hash-1', 'hash-1b'] },
+      { uid: 'u2', identificationHash: 'hash-2', identificationHashes: ['hash-2'] },
     ]);
   });
 
-  it('drops entries missing either field, tolerates garbage/absent input', () => {
+  it('drops entries missing either field and tolerates garbage/absent input', () => {
     expect(
-      mapSessionAccountHashes({
+      mapSessionDetails({
         accounts_data: [
           { uid: 'u1' }, // no hash
           { identification_hash: 'hash-2' }, // no uid
@@ -91,10 +210,18 @@ describe('mapSessionAccountHashes', () => {
           'garbage',
         ],
       })
-    ).toEqual([{ uid: 'u3', identificationHash: 'hash-3' }]);
-    expect(mapSessionAccountHashes({})).toEqual([]);
-    expect(mapSessionAccountHashes(undefined)).toEqual([]);
-    expect(mapSessionAccountHashes({ accounts_data: 'not-an-array' })).toEqual([]);
+    ).toEqual({
+      status: undefined,
+      accounts: [{ uid: 'u3', identificationHash: 'hash-3', identificationHashes: ['hash-3'] }],
+    });
+    expect(mapSessionDetails({})).toEqual({ status: undefined, accounts: [] });
+    expect(mapSessionDetails(undefined)).toEqual({ status: undefined, accounts: [] });
+    expect(mapSessionDetails({ accounts_data: 'not-an-array' })).toEqual({ status: undefined, accounts: [] });
+  });
+
+  it('ignores a non-string or empty status', () => {
+    expect(mapSessionDetails({ status: 42, accounts_data: [] }).status).toBeUndefined();
+    expect(mapSessionDetails({ status: '', accounts_data: [] }).status).toBeUndefined();
   });
 });
 
@@ -206,6 +333,71 @@ describe('mapTransactions', () => {
     expect(transactions[0].status).toBe('pending');
     expect(transactions[0].dedupKey.startsWith('syn:')).toBe(true);
     expect(transactions[0].remittanceInfo).toBe('coffee');
+  });
+
+  it('maps the structured creditor reference and its schema', () => {
+    const { transactions } = mapTransactions(
+      {
+        transactions: [
+          {
+            entry_reference: 'r1',
+            booking_date: '2026-06-01',
+            transaction_amount: { amount: '120.00', currency: 'EUR' },
+            credit_debit_indicator: 'DBIT',
+            status: 'BOOK',
+            reference_number: ' 1234561 ',
+            reference_number_schema: ' SCOR ',
+          },
+          // Empty / whitespace-only / absent → undefined, never an empty string.
+          {
+            entry_reference: 'r2',
+            booking_date: '2026-06-02',
+            transaction_amount: { amount: '5.00', currency: 'EUR' },
+            credit_debit_indicator: 'DBIT',
+            status: 'BOOK',
+            reference_number: '   ',
+            reference_number_schema: null,
+          },
+          {
+            entry_reference: 'r3',
+            booking_date: '2026-06-03',
+            transaction_amount: { amount: '5.00', currency: 'EUR' },
+            credit_debit_indicator: 'DBIT',
+            status: 'BOOK',
+          },
+        ],
+      },
+      'acct-1',
+      now,
+      idFactory
+    );
+    expect(transactions[0]).toMatchObject({ referenceNumber: '1234561', referenceNumberSchema: 'SCOR' });
+    expect(transactions[1].referenceNumber).toBeUndefined();
+    expect(transactions[1].referenceNumberSchema).toBeUndefined();
+    expect(transactions[2].referenceNumber).toBeUndefined();
+  });
+
+  it('keeps the reference number OUT of the dedup key', () => {
+    const mapOne = (reference?: string) =>
+      mapTransactions(
+        {
+          transactions: [
+            {
+              booking_date: '2026-06-01',
+              value_date: '2026-06-01',
+              transaction_amount: { amount: '30.00', currency: 'EUR' },
+              credit_debit_indicator: 'DBIT',
+              status: 'PDNG',
+              creditor: { name: 'Utility Co' },
+              reference_number: reference,
+            },
+          ],
+        },
+        'acct-1',
+        now,
+        idFactory
+      ).transactions[0];
+    expect(mapOne('1234561').dedupKey).toBe(mapOne(undefined).dedupKey);
   });
 
   it('passes through the continuation key', () => {

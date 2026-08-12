@@ -75,10 +75,20 @@ function mapStatusToCode(status: number, apiCode?: string): BankErrorCode {
   return 'UNKNOWN';
 }
 
+/**
+ * The PSU context of an attended call. `ip` alone yields the higher rate
+ * allowance; `userAgent` is a bonus signal some ASPSPs like but must never be
+ * sent without `ip` (an unattended/scheduled run has neither).
+ */
+export interface PsuContext {
+  ip?: string;
+  userAgent?: string;
+}
+
 interface FetchOptions {
   method?: 'GET' | 'POST' | 'DELETE';
   body?: unknown;
-  psuIp?: string; // when present, sent as PSU-IP-Address (higher rate allowance)
+  psu?: PsuContext; // when psu.ip is present, sent as Psu-Ip-Address (higher rate allowance)
 }
 
 async function ebFetch<T>(pathAndQuery: string, opts: FetchOptions = {}): Promise<T> {
@@ -99,7 +109,13 @@ async function ebFetch<T>(pathAndQuery: string, opts: FetchOptions = {}): Promis
     Accept: 'application/json',
   };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
-  if (opts.psuIp) headers['PSU-IP-Address'] = opts.psuIp;
+  // Never send Psu-User-Agent without Psu-Ip-Address — that pairing is what
+  // marks a call "attended" elsewhere (shouldFetchPending, psuPresent audit
+  // field), so a user-agent-only header would misrepresent an unattended call.
+  if (opts.psu?.ip) {
+    headers['Psu-Ip-Address'] = opts.psu.ip;
+    if (opts.psu.userAgent) headers['Psu-User-Agent'] = opts.psu.userAgent;
+  }
 
   let res: Response;
   try {
@@ -171,9 +187,9 @@ export interface StartAuthorizationInput {
   language?: string; // e.g. 'en'
 }
 
-export async function startAuthorization(
-  input: StartAuthorizationInput
-): Promise<{ url: string; authorization_id: string }> {
+// Response validation moved to connect.ts (`requestAuthorization`, via
+// `authResponseSchema`) — this stays a thin, unshaped transport call.
+export async function startAuthorization(input: StartAuthorizationInput): Promise<unknown> {
   const body = {
     access: { valid_until: input.validUntilIso },
     aspsp: { name: input.aspspName, country: input.aspspCountry },
@@ -182,15 +198,15 @@ export async function startAuthorization(
     redirect_url: input.redirectUrl,
     ...(input.language ? { language: input.language } : {}),
   };
-  return ebFetch<{ url: string; authorization_id: string }>(`/auth`, { method: 'POST', body });
+  return ebFetch(`/auth`, { method: 'POST', body });
 }
 
 export async function createSession(code: string): Promise<unknown> {
   return ebFetch(`/sessions`, { method: 'POST', body: { code } });
 }
 
-export async function getAccountBalances(accountUid: string, psuIp?: string): Promise<unknown> {
-  return ebFetch(`/accounts/${encodeURIComponent(accountUid)}/balances`, { psuIp });
+export async function getAccountBalances(accountUid: string, psu?: PsuContext): Promise<unknown> {
+  return ebFetch(`/accounts/${encodeURIComponent(accountUid)}/balances`, { psu });
 }
 
 export interface TransactionsQuery {
@@ -206,7 +222,7 @@ export interface TransactionsQuery {
 export async function getAccountTransactions(
   accountUid: string,
   query: TransactionsQuery = {},
-  psuIp?: string
+  psu?: PsuContext
 ): Promise<unknown> {
   const params = new URLSearchParams();
   if (query.dateFrom) params.set('date_from', query.dateFrom);
@@ -217,7 +233,7 @@ export async function getAccountTransactions(
   const qs = params.toString();
   return ebFetch(
     `/accounts/${encodeURIComponent(accountUid)}/transactions${qs ? `?${qs}` : ''}`,
-    { psuIp }
+    { psu }
   );
 }
 

@@ -108,6 +108,107 @@ describe('reconcileLinks', () => {
     expect(link.id).not.toBe('stable-link-1'); // no key survived re-consent → orphaned history
   });
 
+  it('re-matches on a SECONDARY hash when the primary rotated (multi-basis account)', () => {
+    // EB hashes every identification basis; across re-consent the singular
+    // `identification_hash` moved from the IBAN- to the BBAN-derived one. The set
+    // intersection still ties the two together, so the link id + card config live.
+    const prior = priorLink({
+      accountUid: 'old-uid',
+      iban: undefined,
+      identificationHash: 'hash-iban',
+      identificationHashes: ['hash-iban', 'hash-bban'],
+    });
+    const [link] = reconcileLinks(
+      [prior],
+      [
+        mapped({
+          accountUid: 'new-uid',
+          iban: undefined,
+          identificationHash: 'hash-bban',
+          identificationHashes: ['hash-bban', 'hash-new-basis'],
+        }),
+      ],
+      'conn-new'
+    );
+    expect(link.id).toBe('stable-link-1');
+    expect(link.accountUid).toBe('new-uid');
+    expect(link.customName).toBe('My checking');
+    expect(link.statementDay).toBe(13);
+    expect(link.linkedFinancialAccountId).toBe('acc-1');
+    expect(link.identificationHash).toBe('hash-bban'); // fresh primary wins
+    expect(link.syncCursor?.backfilledThrough).toBeUndefined(); // still a re-consent
+    // Union merge: the set only grows, so a future re-consent has more to match on.
+    expect(link.identificationHashes).toEqual(['hash-iban', 'hash-bban', 'hash-new-basis']);
+  });
+
+  it('matches a legacy singular-hash link against an incoming array containing it', () => {
+    const prior = priorLink({ accountUid: 'old-uid', iban: undefined, identificationHash: 'hash-legacy' });
+    const [link] = reconcileLinks(
+      [prior],
+      [
+        mapped({
+          accountUid: 'new-uid',
+          iban: undefined,
+          identificationHash: 'hash-other-basis',
+          identificationHashes: ['hash-other-basis', 'hash-legacy'],
+        }),
+      ],
+      'conn-new'
+    );
+    expect(link.id).toBe('stable-link-1');
+    expect(link.identificationHashes).toEqual(['hash-legacy', 'hash-other-basis']);
+  });
+
+  it('treats an empty incoming hash array as absent (falls through to uid/IBAN)', () => {
+    const prior = priorLink({ identificationHash: undefined, identificationHashes: [] });
+    const [link] = reconcileLinks(
+      [prior],
+      [mapped({ identificationHash: undefined, identificationHashes: [] })],
+      'conn-new'
+    );
+    expect(link.id).toBe('stable-link-1'); // matched by uid/IBAN as before
+    expect(link.identificationHashes).toBeUndefined(); // never stored as an empty array
+  });
+
+  it('does not match two accounts whose non-empty hash sets are disjoint', () => {
+    const prior = priorLink({
+      accountUid: 'old-uid',
+      iban: undefined,
+      identificationHash: 'hash-a1',
+      identificationHashes: ['hash-a1', 'hash-a2'],
+    });
+    const [link] = reconcileLinks(
+      [prior],
+      [
+        mapped({
+          accountUid: 'new-uid',
+          iban: undefined,
+          identificationHash: 'hash-b1',
+          identificationHashes: ['hash-b1'],
+        }),
+      ],
+      'conn-new'
+    );
+    expect(link.id).not.toBe('stable-link-1'); // a different account
+  });
+
+  it('copies the mapped hash array onto a brand-new link', () => {
+    const [link] = reconcileLinks(
+      [],
+      [
+        mapped({
+          accountUid: 'brand-new',
+          iban: 'FI9999',
+          identificationHash: 'hash-x',
+          identificationHashes: ['hash-x', 'hash-y'],
+        }),
+      ],
+      'conn-new'
+    );
+    expect(link.identificationHashes).toEqual(['hash-x', 'hash-y']);
+    expect(link.identificationHash).toBe('hash-x');
+  });
+
   it('prefers a hash match over an IBAN match on a different link', () => {
     const hashLink = priorLink({
       id: 'link-by-hash',

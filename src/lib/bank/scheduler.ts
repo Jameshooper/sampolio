@@ -37,6 +37,10 @@ let timer: ReturnType<typeof setInterval> | null = null;
 // users' links onto the same joint account draw from one shared counter.
 // Reset each UTC day; backstop on top of the `nextSyncDueAt` cadence so we
 // never exceed the per-account allowance even if two users' schedules align.
+// Deliberately a single-value KEY, unlike the fan-out's sibling *matching* in
+// sync.ts, which compares whole hash sets (`linksShareIdentity`): a set can't
+// key a map, and the primary hash is stable enough per account that keying on
+// it keeps budget semantics identical for existing data.
 const fetchesToday = new Map<string, { date: string; count: number }>();
 
 function utcDate(now: number): string {

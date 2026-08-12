@@ -29,8 +29,8 @@ import { getMortgageTransfersForAccount, getLinkedCashBankTransactions } from '@
 import { matchCardPaymentsWithFingerprints } from '@/lib/bank/card-payment-match';
 import { beginConnection, beginReconnect } from '@/lib/bank/connect';
 import { runSync } from '@/lib/bank/sync';
-import { getAspsps, redactBankError } from '@/lib/bank/client';
-import { mapAspsps } from '@/lib/bank/mappers';
+import { redactBankError } from '@/lib/bank/client';
+import { getAspspDetailsCached } from '@/lib/bank/aspsp-info';
 import { computeCardBilling, transactionsForCycle, toCardTxn, isCardPayment } from '@/lib/bank/card-billing';
 import { isBankFeatureConfigured, MIN_MANUAL_REFRESH_INTERVAL_MS } from '@/lib/bank/constants';
 import { getConsentExpiryInfo, isSyncFailing, effectiveCardNumbers } from '@/lib/bank-utils';
@@ -68,8 +68,12 @@ export async function listBankAspsps(
     if (!isBankFeatureConfigured()) {
       return { success: false, error: 'Bank sync is not configured on this server' };
     }
-    const raw = await getAspsps(country);
-    return { success: true, data: mapAspsps(raw) };
+    // Reads through the same TTL cache `beginConnection`/`beginReconnect` use for
+    // `maximum_consent_validity` lookups, so the connect that follows the picker
+    // reuses this fetch instead of hitting `GET /aspsps` again.
+    const details = await getAspspDetailsCached(country);
+    if (!details) return { success: false, error: 'Could not load the list of banks' };
+    return { success: true, data: details.map((a) => ({ name: a.name, country: a.country })) };
   } catch (error) {
     console.error('List ASPSPs error:', redactBankError(error));
     return { success: false, error: 'Could not load the list of banks' };
@@ -119,18 +123,22 @@ export async function reconnectBankConnection(
   }
 }
 
-async function getPsuIp(): Promise<string | undefined> {
+/** The attended PSU context for a request-scoped call: IP (higher rate
+ * allowance) + user agent (paired with the IP — never sent alone, see client.ts). */
+async function getPsuContext(): Promise<{ psuIp?: string; psuUserAgent?: string }> {
   try {
     const h = await headers();
     const fwd = h.get('x-forwarded-for');
-    if (fwd) return fwd.split(',')[0].trim();
-    return h.get('x-real-ip') ?? undefined;
+    const psuIp = fwd ? fwd.split(',')[0].trim() : h.get('x-real-ip') ?? undefined;
+    const psuUserAgent = h.get('user-agent') ?? undefined;
+    return { psuIp, psuUserAgent };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
-/** On-demand "Refresh now". PSU is present, so we pass their IP (higher allowance). */
+/** On-demand "Refresh now". PSU is present, so we pass their IP + user agent
+ * (higher allowance). */
 export async function refreshBankConnection(
   connectionId: string
 ): Promise<ApiResponse<BankSyncRun>> {
@@ -148,8 +156,8 @@ export async function refreshBankConnection(
       }
     }
 
-    const psuIp = await getPsuIp();
-    const run = await runSync(session.user.id, connectionId, 'manual', { psuIp });
+    const { psuIp, psuUserAgent } = await getPsuContext();
+    const run = await runSync(session.user.id, connectionId, 'manual', { psuIp, psuUserAgent });
     return { success: true, data: run };
   } catch (error) {
     console.error('Refresh bank connection error:', redactBankError(error));

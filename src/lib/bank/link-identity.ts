@@ -21,6 +21,46 @@ export function linkIdentityKey(
 }
 
 /**
+ * Every identification hash known for a link — the deduped union of the plural
+ * `identificationHashes` and the singular `identificationHash`, order-preserving
+ * (array first). Empty for a legacy link that has neither.
+ */
+export function linkIdentityHashes(
+  link: Pick<BankAccountLink, 'identificationHash' | 'identificationHashes'>
+): string[] {
+  const out: string[] = [];
+  const push = (h: unknown) => {
+    if (typeof h === 'string' && h && !out.includes(h)) out.push(h);
+  };
+  if (Array.isArray(link.identificationHashes)) {
+    for (const h of link.identificationHashes) push(h);
+  }
+  push(link.identificationHash);
+  return out;
+}
+
+/**
+ * True when two links point at the same underlying bank account. Enable Banking
+ * hashes every identification basis it knows for an account (IBAN, BBAN, …), and
+ * which one lands in the singular `identification_hash` can change between
+ * sessions — so when BOTH sides expose hashes, a non-empty intersection is the
+ * decisive signal. Otherwise (a legacy link with no hashes on either side) this
+ * falls back to `linkIdentityKey` equality, i.e. exactly today's behavior.
+ */
+export function linksShareIdentity(
+  a: Pick<BankAccountLink, 'id' | 'iban' | 'identificationHash' | 'identificationHashes'>,
+  b: Pick<BankAccountLink, 'id' | 'iban' | 'identificationHash' | 'identificationHashes'>
+): boolean {
+  const ha = linkIdentityHashes(a);
+  const hb = linkIdentityHashes(b);
+  if (ha.length && hb.length) {
+    const set = new Set(hb);
+    return ha.some((h) => set.has(h));
+  }
+  return linkIdentityKey(a) === linkIdentityKey(b);
+}
+
+/**
  * True when `lastSyncedAt` is recent enough that this cycle's sync can be
  * skipped — i.e. another user's sync (or our own) already refreshed this
  * account within the last `intervalMs`, allowing for `tickMs` of scheduler

@@ -1394,6 +1394,11 @@ export interface BankAccountLink {
   // users (per EB's FAQ); the primary re-consent matching key (accountUid/iban
   // are fallbacks — see reconcile-links.ts).
   identificationHash?: string;
+  // ALL of the account's identification hashes (EB hashes each identification
+  // basis it knows — IBAN, BBAN, …), a superset containing `identificationHash`.
+  // Matching intersects these sets so a changed PRIMARY hash no longer orphans a
+  // link. Absent on legacy links (backfilled by sync / on reconnect).
+  identificationHashes?: string[];
   iban?: string; // stored; masked in UI, never logged
   name?: string; // bank-provided name (may be blank, e.g. cards); refreshed on re-consent
   customName?: string; // user-set display name; preserved across re-consent, wins over name
@@ -1438,6 +1443,9 @@ export interface BankConnection {
   linkedAccounts: BankAccountLink[];
   consentGrantedAt?: string;
   consentExpiresAt?: string; // = the returned access.valid_until
+  // The bank's own `maximum_consent_validity` (seconds) from GET /aspsps, as read
+  // at the last (re)connect — the ceiling we requested against. Display/debug only.
+  aspspMaxConsentValiditySeconds?: number;
   nextSyncDueAt?: string; // persisted scheduler cursor (restart-safe)
   lastSyncAt?: string;
   lastSyncStatus?: BankSyncStatus;
@@ -1470,6 +1478,11 @@ export interface BankTransaction {
   counterpartyName?: string;
   counterpartyAccount?: string; // counterparty IBAN (masked in UI, never logged)
   remittanceInfo?: string; // may be multi-line (joined with newlines)
+  // Structured creditor reference the bank parsed out of the payment (Finnish
+  // viitenumero / ISO RF reference). Display + search only — never part of the
+  // dedup identity (a later fetch may omit it; see dedup.ts).
+  referenceNumber?: string;
+  referenceNumberSchema?: string; // the reference's scheme, e.g. 'SCOR'
   bankTransactionCode?: string; // bank's human label, e.g. "e-lasku"
   merchantCategoryCode?: string;
   balanceAfter?: number; // account balance after this transaction, if the bank returns it

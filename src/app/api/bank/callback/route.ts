@@ -56,9 +56,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     request.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
     request.headers.get('x-real-ip') ??
     undefined;
+  const psuUserAgent = request.headers.get('user-agent') ?? undefined;
 
   try {
-    const result = await completeConnection(session.user.id, code, state, psuIp);
+    const result = await completeConnection(session.user.id, code, state, { psuIp, psuUserAgent });
     if (!result) {
       // No pending connection matched this state (replay / wrong user).
       return redirect(request, '/settings?bankError=invalid_state');

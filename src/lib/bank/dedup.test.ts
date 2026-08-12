@@ -139,6 +139,46 @@ describe('mergeTransactions — stored identity continuity', () => {
     expect(replaced.valueDate).toBe('2026-07-29');
   });
 
+  it('coalesces referenceNumber/referenceNumberSchema instead of wiping them', () => {
+    // The viitenumero is display-only, so a later fetch that omits it (banks are
+    // inconsistent about which endpoint carries the parsed reference) must not
+    // erase what we already stored.
+    const stored = tx({
+      dedupKey: 'ref-a',
+      entryReference: 'ref-a',
+      referenceNumber: '1234561',
+      referenceNumberSchema: 'SCOR',
+    });
+    const withoutRef = tx({
+      dedupKey: 'ref-a',
+      entryReference: 'ref-a',
+      referenceNumber: undefined,
+      referenceNumberSchema: undefined,
+    });
+    const kept = mergeTransactions([stored], [withoutRef], now).merged[0];
+    expect(kept.referenceNumber).toBe('1234561');
+    expect(kept.referenceNumberSchema).toBe('SCOR');
+
+    const withRef = tx({
+      dedupKey: 'ref-a',
+      entryReference: 'ref-a',
+      referenceNumber: '7654321',
+      referenceNumberSchema: 'ISO',
+    });
+    const replaced = mergeTransactions([stored], [withRef], now).merged[0];
+    expect(replaced.referenceNumber).toBe('7654321');
+    expect(replaced.referenceNumberSchema).toBe('ISO');
+  });
+
+  it('does not mint a new row for an existing row that only gained a referenceNumber', () => {
+    const stored = tx({ dedupKey: 'ref-a', entryReference: 'ref-a' });
+    const res = mergeTransactions([stored], [tx({ dedupKey: 'ref-a', entryReference: 'ref-a', referenceNumber: '1234561' })], now);
+    expect(res.merged).toHaveLength(1);
+    expect(res.added).toBe(0);
+    expect(res.updated).toBe(1);
+    expect(res.merged[0].referenceNumber).toBe('1234561');
+  });
+
   it('books a pending in place when the bank keeps the same entry_reference (stable-ref path)', () => {
     const pending = tx({
       id: 'p-1',
@@ -225,6 +265,18 @@ describe('mergeTransactions — stored identity continuity', () => {
       now
     );
     expect(fromPendingBookingDate.merged[0]).toMatchObject({ id: 'p-1', transactionDate: '2026-07-27' });
+
+    // The pending's reference survives a promotion that omits it.
+    const carriedRef = mergeTransactions(
+      [tx({ ...pendingBase, referenceNumber: '1234561', referenceNumberSchema: 'SCOR' })],
+      [tx({ ...bookedBase, referenceNumber: undefined, referenceNumberSchema: undefined })],
+      now
+    );
+    expect(carriedRef.merged[0]).toMatchObject({
+      id: 'p-1',
+      referenceNumber: '1234561',
+      referenceNumberSchema: 'SCOR',
+    });
   });
 });
 
@@ -269,6 +321,30 @@ describe('mergeTransactions — fuzzy pending → booked promotion', () => {
       status: 'booked',
       transactionDate: '2026-07-27',
       firstSeenAt: '2026-07-27T06:00:00.000Z',
+    });
+  });
+
+  it('carries the pending row’s referenceNumber through a fuzzy promotion', () => {
+    const booked = tx({
+      id: 'fresh-uuid',
+      dedupKey: 'book-ref-2',
+      entryReference: 'book-ref-2',
+      status: 'booked',
+      amount: -95.4,
+      counterpartyName: 'UNKNOWN*MERCHANT X',
+      bookingDate: '2026-07-30',
+      referenceNumber: undefined,
+      referenceNumberSchema: undefined,
+    });
+    const res = mergeTransactions(
+      [refPending({ referenceNumber: '1234561', referenceNumberSchema: 'SCOR' })],
+      [booked],
+      now
+    );
+    expect(res.merged[0]).toMatchObject({
+      id: 'p-1',
+      referenceNumber: '1234561',
+      referenceNumberSchema: 'SCOR',
     });
   });
 

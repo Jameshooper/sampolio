@@ -20,12 +20,15 @@ import { syntheticDedupKey } from './dedup';
 export interface RawAspsp {
   name?: string;
   country?: string;
+  maximum_consent_validity?: number | string | null; // seconds
+  required_psu_headers?: string[] | null;
 }
 
 export interface RawSessionAccount {
   uid?: string;
   account_id?: { iban?: string } | null;
   identification_hash?: string;
+  identification_hashes?: string[];
   name?: string;
   details?: string;
   product?: string;
@@ -55,6 +58,8 @@ export interface RawTransaction {
   creditor_account?: { iban?: string } | null;
   debtor_account?: { iban?: string } | null;
   remittance_information?: string[] | string | null;
+  reference_number?: string | null;
+  reference_number_schema?: string | null;
   bank_transaction_code?: { description?: string; code?: string } | string | null;
   merchant_category_code?: string | null;
   balance_after_transaction?: { amount?: string | number; currency?: string } | null;
@@ -64,10 +69,22 @@ export interface RawTransaction {
 export interface MappedBankAccount {
   accountUid: string;
   identificationHash?: string;
+  // Every hash the bank exposed for the account (superset of the singular one).
+  identificationHashes?: string[];
   iban?: string;
   name?: string;
   currency: Currency;
   accountRole: BankAccountRole;
+}
+
+/** One bank from `GET /aspsps`, with the connect-relevant capability fields. */
+export interface AspspDetails {
+  name: string;
+  country: string;
+  /** `maximum_consent_validity` in seconds; absent when missing or nonsensical. */
+  maximumConsentValiditySeconds?: number;
+  /** PSU headers this bank requires on attended calls; absent when not stated. */
+  requiredPsuHeaders?: string[];
 }
 
 export interface MappedBalance {
@@ -93,6 +110,26 @@ function toNumber(v?: string | number | null): number {
   return 0;
 }
 
+/**
+ * Deduped list of identification hashes for one raw account: the bank's
+ * `identification_hashes` array plus the singular `identification_hash` folded in
+ * (EB's primary is always one of them, but be defensive). Garbage — a non-array,
+ * non-string entries, an empty result — degrades to `undefined`, i.e. "unknown",
+ * which every consumer treats the same as a legacy link with no hashes.
+ */
+function toHashList(
+  hashes: unknown,
+  singular: string | undefined
+): string[] | undefined {
+  const out: string[] = [];
+  const push = (h: unknown) => {
+    if (typeof h === 'string' && h.trim() && !out.includes(h)) out.push(h);
+  };
+  if (Array.isArray(hashes)) for (const h of hashes) push(h);
+  push(singular);
+  return out.length ? out : undefined;
+}
+
 /** Map a bank's account-type/usage hints to our coarse role. */
 export function inferAccountRole(acct: RawSessionAccount): BankAccountRole {
   const t = (acct.cash_account_type ?? '').toUpperCase();
@@ -104,12 +141,39 @@ export function inferAccountRole(acct: RawSessionAccount): BankAccountRole {
 }
 
 // ---------- Mappers ----------
-export function mapAspsps(rawInput: unknown): { name: string; country: string }[] {
+/**
+ * Every bank in a `GET /aspsps` response, with the fields the connect flow cares
+ * about. Tolerant: a nameless entry is dropped; a non-finite or non-positive
+ * `maximum_consent_validity` and a non-array `required_psu_headers` degrade to
+ * `undefined` so callers fall back to their own defaults.
+ */
+export function mapAspspDetails(rawInput: unknown): AspspDetails[] {
   const raw = (rawInput ?? {}) as { aspsps?: RawAspsp[] };
   const list = raw?.aspsps ?? [];
+  if (!Array.isArray(list)) return [];
   return list
-    .filter((a): a is RawAspsp => !!a && !!a.name)
-    .map((a) => ({ name: a.name!, country: (a.country ?? '').toUpperCase() }));
+    .filter((a): a is RawAspsp => !!a && typeof a.name === 'string' && !!a.name)
+    .map((a) => {
+      const validity = toNumber(
+        typeof a.maximum_consent_validity === 'number' || typeof a.maximum_consent_validity === 'string'
+          ? a.maximum_consent_validity
+          : null
+      );
+      const headers = Array.isArray(a.required_psu_headers)
+        ? a.required_psu_headers.filter((h): h is string => typeof h === 'string' && !!h.trim())
+        : [];
+      return {
+        name: a.name!,
+        country: (a.country ?? '').toUpperCase(),
+        maximumConsentValiditySeconds: Number.isFinite(validity) && validity > 0 ? validity : undefined,
+        requiredPsuHeaders: headers.length ? headers : undefined,
+      } satisfies AspspDetails;
+    });
+}
+
+/** The bank picker's slim shape (name + country only). */
+export function mapAspsps(rawInput: unknown): { name: string; country: string }[] {
+  return mapAspspDetails(rawInput).map((a) => ({ name: a.name, country: a.country }));
 }
 
 export function mapSessionAccounts(rawInput: unknown): MappedBankAccount[] {
@@ -120,6 +184,7 @@ export function mapSessionAccounts(rawInput: unknown): MappedBankAccount[] {
     .map((a) => ({
       accountUid: a.uid!,
       identificationHash: a.identification_hash ?? undefined,
+      identificationHashes: toHashList(a.identification_hashes, a.identification_hash),
       iban: a.account_id?.iban ?? undefined,
       name: a.name ?? a.product ?? undefined,
       currency: toCurrency(a.currency),
@@ -128,23 +193,48 @@ export function mapSessionAccounts(rawInput: unknown): MappedBankAccount[] {
 }
 
 /**
- * Extract uid ↔ identification_hash pairs from a `GET /sessions/{id}` response,
- * used to backfill the stable hash onto links created before we started
- * capturing it (see reconcile-links.ts). Tolerant: entries missing either
- * field, or a missing/malformed `accounts_data`, are dropped rather than throw.
+ * The parts of a `GET /sessions/{id}` response we act on: the session's own
+ * `status` (see `terminalSessionStatus`) and each account's uid ↔ identification
+ * hash(es), used to backfill the stable identity onto links created before we
+ * started capturing it (see reconcile-links.ts). Tolerant: entries missing a uid
+ * or any hash, and a missing/malformed `accounts_data`, are dropped rather than
+ * throw.
  */
-export function mapSessionAccountHashes(
-  rawInput: unknown
-): { uid: string; identificationHash: string }[] {
-  const raw = (rawInput ?? {}) as { accounts_data?: { uid?: string; identification_hash?: string }[] };
+export function mapSessionDetails(rawInput: unknown): {
+  status?: string;
+  accounts: { uid: string; identificationHash: string; identificationHashes?: string[] }[];
+} {
+  const raw = (rawInput ?? {}) as {
+    status?: unknown;
+    accounts_data?: { uid?: string; identification_hash?: string; identification_hashes?: string[] }[];
+  };
+  const status = typeof raw?.status === 'string' && raw.status ? raw.status : undefined;
   const list = raw?.accounts_data ?? [];
-  if (!Array.isArray(list)) return [];
-  return list
+  if (!Array.isArray(list)) return { status, accounts: [] };
+  const accounts = list
     .filter(
-      (a): a is { uid: string; identification_hash: string } =>
+      (a): a is { uid: string; identification_hash: string; identification_hashes?: string[] } =>
         !!a && typeof a.uid === 'string' && typeof a.identification_hash === 'string'
     )
-    .map((a) => ({ uid: a.uid, identificationHash: a.identification_hash }));
+    .map((a) => ({
+      uid: a.uid,
+      identificationHash: a.identification_hash,
+      identificationHashes: toHashList(a.identification_hashes, a.identification_hash),
+    }));
+  return { status, accounts };
+}
+
+/**
+ * Whether a session `status` means the consent is dead and no further data calls
+ * can succeed — `'revoked'` when the PSU pulled consent, `'expired'` for the
+ * lifecycle ends (expiry/close/cancel). Anything else, including a status enum
+ * value we don't know, returns null (never act on an unrecognized state).
+ */
+export function terminalSessionStatus(status?: string): 'expired' | 'revoked' | null {
+  const s = (status ?? '').trim().toUpperCase();
+  if (s === 'REVOKED') return 'revoked';
+  if (s === 'EXPIRED' || s === 'CLOSED' || s === 'CANCELLED') return 'expired';
+  return null;
 }
 
 export function mapBalances(rawInput: unknown): MappedBalance[] {
@@ -306,6 +396,9 @@ export function mapTransactions(
         counterpartyName,
         counterpartyAccount,
         remittanceInfo,
+        // Structured creditor reference (viitenumero / RF) — display + search only.
+        referenceNumber: t.reference_number?.trim() || undefined,
+        referenceNumberSchema: t.reference_number_schema?.trim() || undefined,
         bankTransactionCode: bankCodeOf(t),
         merchantCategoryCode: t.merchant_category_code ?? undefined,
         balanceAfter,

@@ -41,12 +41,19 @@ import {
   BankApiError,
   redactBankError,
   describeBankError,
+  type PsuContext,
 } from './client';
-import { mapBalances, mapTransactions, mapSessionAccountHashes, type MappedBalance } from './mappers';
+import {
+  mapBalances,
+  mapTransactions,
+  mapSessionDetails,
+  terminalSessionStatus,
+  type MappedBalance,
+} from './mappers';
 import { mergeTransactions, type FetchWindow } from './dedup';
 import { repairDegenerateBookingDates } from './repair-booking-dates';
 import { applyLinkBalances } from './apply-link-balances';
-import { linkIdentityKey, isLinkFresh } from './link-identity';
+import { linksShareIdentity, isLinkFresh } from './link-identity';
 import { nextConsecutiveSyncFailures } from '@/lib/bank-utils';
 import {
   BACKFILL_DAYS,
@@ -151,7 +158,8 @@ function logSyncSummary(
 }
 
 export interface SyncOptions {
-  psuIp?: string; // present ⇒ PSU-IP-Address sent (higher rate allowance)
+  psuIp?: string; // present ⇒ attended run: PSU headers sent (higher rate allowance)
+  psuUserAgent?: string; // paired with psuIp; never sent on its own (see client.ts)
 }
 
 /** Run a sync for one connection, serialized per connection. */
@@ -179,6 +187,13 @@ async function doRunSync(
   now: number
 ): Promise<BankSyncRun> {
   const nowIso = new Date(now).toISOString();
+  // Attended runs send PSU headers as a pair; an IP-less run (the scheduler)
+  // sends none. Built once and threaded to every client call in this run, so
+  // "attended ⇔ psuIp present" stays the single switch behind `psuPresent` and
+  // `shouldFetchPending`.
+  const psu: PsuContext | undefined = opts.psuIp
+    ? { ip: opts.psuIp, userAgent: opts.psuUserAgent }
+    : undefined;
   const run: BankSyncRun = {
     id: uuidv4(),
     connectionId,
@@ -229,27 +244,67 @@ async function doRunSync(
   const touchedTags = new Set<string>();
   const updatedLinks: BankAccountLink[] = [...connection.linkedAccounts];
 
-  // ---- one-time identification_hash backfill ----
-  // Links created before we started capturing `identification_hash` only have
-  // an `accountUid`. Backfill the stable hash from the live session's account
-  // list so a future re-consent can match this account even if it has no IBAN
-  // and its uid rotates (e.g. a credit card). Guarded so steady state (every
-  // link already hashed) costs zero extra API calls; a failure here never
-  // blocks the sync — it just retries next run.
-  if (accounts.some((l) => l.accountUid && !l.identificationHash)) {
+  // ---- one-time identification-hash backfill ----
+  // Links created before we started capturing the identification hashes only
+  // have an `accountUid`. Backfill the stable hashes from the live session's
+  // account list so a future re-consent can match this account even if it has
+  // no IBAN and its uid rotates (e.g. a credit card), and even if the bank's
+  // primary hash basis changes (the plural set is what makes intersection
+  // matching work — see reconcile-links.ts). Guarded so steady state (every
+  // link already carries both the singular hash and a non-empty set) costs zero
+  // extra API calls; a failure here never blocks the sync — it just retries.
+  // GET /sessions is an Enable Banking lookup, so it spends no bank allowance.
+  if (
+    accounts.some(
+      (l) => l.accountUid && (!l.identificationHash || !l.identificationHashes?.length)
+    )
+  ) {
     try {
-      const rawSession = await getSession(secret.sessionId);
-      const hashByUid = new Map(
-        mapSessionAccountHashes(rawSession).map((h) => [h.uid, h.identificationHash])
-      );
+      const details = mapSessionDetails(await getSession(secret.sessionId));
+
+      // Free consent-death detection: this response carries the session status,
+      // so a dead consent is caught here instead of only via a failing data
+      // call. Opportunistic by nature — it fires only on the runs where the
+      // backfill lookup already happens (no extra request is ever made for it).
+      const terminal = terminalSessionStatus(details.status);
+      if (terminal) {
+        run.status = 'error';
+        run.error = 'EXPIRED_SESSION';
+        run.finishedAt = new Date().toISOString();
+        await updateBankConnection(userId, connectionId, {
+          status: terminal,
+          nextSyncDueAt: undefined,
+        });
+        await appendBankSyncRun(userId, connectionId, run);
+        safeUpdateTags([
+          `user:${userId}:bank-connections`,
+          `user:${userId}:bank-connection:${connectionId}`,
+          `user:${userId}:bank-connection:${connectionId}:runs`,
+        ]);
+        console.log(
+          `[bank-sync] ${connection.aspspName} ${trigger} → stopped (session ${terminal}; reconnect needed)`
+        );
+        return run;
+      }
+
+      const byUid = new Map(details.accounts.map((a) => [a.uid, a]));
       for (let i = 0; i < updatedLinks.length; i++) {
-        const hash = hashByUid.get(updatedLinks[i].accountUid);
-        if (hash && !updatedLinks[i].identificationHash) {
-          updatedLinks[i] = { ...updatedLinks[i], identificationHash: hash };
-        }
+        const found = byUid.get(updatedLinks[i].accountUid);
+        if (!found) continue;
+        const identificationHash = updatedLinks[i].identificationHash ?? found.identificationHash;
+        updatedLinks[i] = {
+          ...updatedLinks[i],
+          identificationHash,
+          // Fall back to the singular hash as a one-element set when the session
+          // served no plural array, so the guard above converges and this lookup
+          // never re-fires for the same link.
+          identificationHashes:
+            found.identificationHashes ??
+            updatedLinks[i].identificationHashes ?? [identificationHash],
+        };
       }
     } catch (err) {
-      console.warn(`[bank-sync] identification_hash backfill skipped: ${redactBankError(err)}`);
+      console.warn(`[bank-sync] identification-hash backfill skipped: ${redactBankError(err)}`);
     }
   }
 
@@ -276,7 +331,7 @@ async function doRunSync(
 
   /**
    * Fan the just-fetched raw data out to every OTHER user's link on the same
-   * underlying account (matched by `linkIdentityKey`) so their sync can skip
+   * underlying account (matched by `linksShareIdentity`) so their sync can skip
    * re-fetching it this cycle. Applies on both scheduled and manual runs.
    * Never throws — a fan-out problem must never fail the PRIMARY sync; every
    * failure is caught and logged (PII-free) at the narrowest scope it occurs.
@@ -289,7 +344,6 @@ async function doRunSync(
     // not prune pendings on the strength of a fetch that never asked for them.
     pruneWindow: FetchWindow | undefined;
   }): Promise<void> {
-    const identityKey = linkIdentityKey(params.primaryLink);
     let all: { userId: string; connection: BankConnection }[];
     try {
       all = await getAllUserConnectionsOnce();
@@ -304,9 +358,12 @@ async function doRunSync(
       // Avoid a write race with that connection's own concurrent sync.
       if (isConnectionSyncInFlight(siblingConn.id)) continue;
 
+      // Hash-set intersection first (a bank may surface a different primary
+      // hash to each user's session for the same account), falling back to
+      // `linkIdentityKey` equality for links with no hashes at all.
       const matches = siblingConn.linkedAccounts
         .map((l, i) => ({ l, i }))
-        .filter(({ l }) => !l.isExcluded && linkIdentityKey(l) === identityKey);
+        .filter(({ l }) => !l.isExcluded && linksShareIdentity(params.primaryLink, l));
       if (matches.length === 0) continue;
 
       const updatedSiblingLinks = [...siblingConn.linkedAccounts];
@@ -465,7 +522,7 @@ async function doRunSync(
             continuationKey,
             strategy: isBackfill ? 'longest' : 'default',
           },
-          opts.psuIp
+          psu
         );
         const mapped = mapTransactions(raw, link.id, nowIso, () => uuidv4());
         incoming.push(...mapped.transactions);
@@ -492,7 +549,7 @@ async function doRunSync(
                 strategy: 'default',
                 transactionStatus: 'PDNG',
               },
-              opts.psuIp
+              psu
             );
             const mapped = mapTransactions(rawPending, link.id, nowIso, () => uuidv4());
             incoming.push(...mapped.transactions);
@@ -528,7 +585,7 @@ async function doRunSync(
 
       // --- balances ---
       phase = 'balances';
-      const rawBal = await getAccountBalances(link.accountUid, opts.psuIp);
+      const rawBal = await getAccountBalances(link.accountUid, psu);
       const balances = mapBalances(rawBal);
 
       const newCursor = {
