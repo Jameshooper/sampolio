@@ -42,7 +42,7 @@ runbook: [`operations.md`](operations.md).
 
 | Route | File | Purpose |
 |---|---|---|
-| `/` | `src/app/page.tsx` | Home dashboard (glance, split balances, activity; add via the global FAB). Server component: `auth()` + `redirect('/auth/signin')`; wraps `AppLayout` itself (outside the route group). |
+| `/` | `src/app/page.tsx` | Home dashboard (bank-account glance strip + projected-month tile, merged split balances+activity card; add via the global FAB). Server component: `auth()` + `redirect('/auth/signin')`; wraps `AppLayout` itself (outside the route group). |
 | `/overview` | `src/app/(dashboard)/overview/page.tsx` | Wealth dashboard (net worth, KPIs, reminders). |
 | `/cashflow` | `src/app/(dashboard)/cashflow/page.tsx` | Monthly cash-flow projection + retrospective. |
 | `/mortgage` | `src/app/(dashboard)/mortgage/page.tsx` | Shared-mortgage ledger, charts, reconcile/import. |
@@ -101,7 +101,7 @@ components.
 | `admin.ts` | `getUsers`, `getUserById`, `createUser`, `updateUser` (incl. optional `avatarDataUri`), `deleteUser`, `getSettings`, `updateSettings`, `revalidateAllCaches` |
 | `app-info.ts` | `getAppVersion` |
 | `auth.ts` | `signUp`, `checkSignupEnabled` |
-| `bank.ts` | `getBankFeatureStatus`, `getBankConnections`, `listBankAspsps`, `startBankConnection`, `reconnectBankConnection`, `refreshBankConnection`, `disconnectBankConnection`, `updateBankAccountLink`, `getBankConnectionsNeedingAttention`, `getCardLiabilities`, `getCreditCardOptions`, `getCardStatementBreakdownForAccount`, `getBankSyncRuns`, `getBankTransactionsForLink`, `getBankConnection` |
+| `bank.ts` | `getBankFeatureStatus`, `getBankConnections`, `listBankAspsps`, `startBankConnection`, `reconnectBankConnection`, `refreshBankConnection`, `disconnectBankConnection`, `updateBankAccountLink`, `getBankConnectionsNeedingAttention`, `getCardLiabilities`, `getHomeBankGlance`, `getCreditCardOptions`, `getCardStatementBreakdownForAccount`, `getBankSyncRuns`, `getBankTransactionsForLink`, `getBankConnection` |
 | `budgets.ts` | `getBudgets`, `getBudgetById`, `createBudget`, `updateBudget`, `deleteBudget`, `confirmBudget`, `unconfirmBudget`, `addBudgetLine`, `updateBudgetLine`, `deleteBudgetLine`, `addBudgetFundingSource`, `updateBudgetFundingSource`, `deleteBudgetFundingSource`, `addBudgetExpenseEntry`, `updateBudgetExpenseEntry`, `deleteBudgetExpenseEntry` |
 | `debts.ts` | `getDebts`, `getDebtById`, `createDebt`, `updateDebt`, `deleteDebt`, `getReferenceRates`, `setReferenceRate`, `deleteReferenceRate`, `getExtraPayments`, `createExtraPayment`, `deleteExtraPayment` |
 | `data-transfer.ts` | `exportUserData`, `importUserData` (Settings JSON backup; merge/replace) |
@@ -305,7 +305,7 @@ any deploy that changes cached assets. Responsive/PWA UI rules: root `AGENTS.md`
 | `providers/` | `PrimeProvider`, `ThemeProvider`, `ToastProvider`, `CelebrationProvider`, `ServiceWorkerRegister` |
 | `charts/` | ECharts/Chart.js components (cashflow waterfall, treemap, monthly flow, net-worth, wealth, scenario comparison) |
 | `modals/` | Cashflow item modal, occurrence-override dialog, users (admin) modal |
-| `home/` | `HomeDashboard` (glance tile, split balances, activity feed) |
+| `home/` | `HomeDashboard` (bank glance strip, projected-month tile, merged split balances + activity card) |
 | `bank/` | Connections settings panel, account picker, transaction ledger table, account-order dialog |
 | `cashflow/` | Collapsing header, month strip, month-details panel, projection table |
 | `overview/` | `BannerStack`, `KpiGroup`, plan-check card (`forecast-vs-actual-card.tsx`), net-worth explain dialog |

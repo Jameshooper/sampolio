@@ -861,6 +861,66 @@ describe('current-month actualization', () => {
     expect(line.remainingAmount).toBeCloseTo(250, 5);
     expect(result[0].totalExpenses).toBeCloseTo(250, 5);
   });
+
+  // A fixed-amount expense downgrades from the 'full' policy to 'exact-only':
+  // it never gets gap-reduced, and it never counts in its category's blend
+  // denominator (so the variable sibling absorbs the whole unmatched spend).
+  function fixedAmountFixture() {
+    const internet = createMockRecurringItem({
+      accountId: account.id, type: 'expense', name: 'Internet', amount: 40,
+      category: 'Utilities', frequency: 'monthly', startDate: '2026-01', isFixedAmount: true,
+    });
+    const electricity = createMockRecurringItem({
+      accountId: account.id, type: 'expense', name: 'Electricity', amount: 100,
+      category: 'Utilities', frequency: 'monthly', startDate: '2026-01',
+    });
+    const snapshot = createMockSnapshot({ yearMonth: '2026-03', actualBalance: 9000 });
+    return { internet, electricity, snapshot };
+  }
+
+  it('a fixed-amount expense is never gap-reduced; its variable same-category sibling absorbs the unmatched spend', () => {
+    const { internet, electricity, snapshot } = fixedAmountFixture();
+    const currentMonthActuals: CurrentMonthActuals = {
+      // guessItemCategory maps "Caruna" to 'Utilities'; -30 matches neither line exactly.
+      transactions: [txn({ id: 't1', amount: -30, counterpartyName: 'Caruna' })],
+    };
+
+    const result = calculateProjection(
+      account, [internet, electricity], [], [], undefined, snapshot, [], [], [], currentMonthActuals,
+    );
+
+    const internetLine = result[0].expenseBreakdown.find((l) => l.name === 'Internet')!;
+    expect(internetLine.isPaid).toBe(false);
+    expect(internetLine.remainingAmount).toBe(internetLine.amount); // full 40, untouched
+
+    // Only the variable line is in the blend: planned 100, unmatched spend 30 -> 70 left.
+    const electricityLine = result[0].expenseBreakdown.find((l) => l.name === 'Electricity')!;
+    expect(electricityLine.isPaid).toBe(false);
+    expect(electricityLine.remainingAmount).toBeCloseTo(70, 5);
+    expect(result[0].totalExpenses).toBeCloseTo(110, 5);
+    expect(result[0].plannedTotalExpenses).toBe(140);
+  });
+
+  it('a fixed-amount expense is still marked paid by an exact bank match', () => {
+    const { internet, electricity, snapshot } = fixedAmountFixture();
+    const currentMonthActuals: CurrentMonthActuals = {
+      transactions: [txn({ id: 't1', amount: -40, counterpartyName: 'Elisa' })],
+    };
+
+    const result = calculateProjection(
+      account, [internet, electricity], [], [], undefined, snapshot, [], [], [], currentMonthActuals,
+    );
+
+    const internetLine = result[0].expenseBreakdown.find((l) => l.name === 'Internet')!;
+    expect(internetLine.isPaid).toBe(true);
+    expect(internetLine.remainingAmount).toBe(0);
+    expect(internetLine.matchedTxId).toBe('t1');
+
+    // The matched debit is claimed, so nothing is left to blend against Electricity.
+    const electricityLine = result[0].expenseBreakdown.find((l) => l.name === 'Electricity')!;
+    expect(electricityLine.remainingAmount).toBe(100);
+    expect(result[0].totalExpenses).toBe(100);
+  });
 });
 
 describe('goal and trip transfers', () => {

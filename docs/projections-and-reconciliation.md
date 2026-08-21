@@ -347,10 +347,14 @@ on "anchor month equals the current calendar month" before passing the param.
   Uncategorizable debits reduce nothing. Income lines are never gap-blended.
 - **Policies** (`ActualMatchPolicy`), assigned per line by `calculateProjection` before
   calling into the module:
-  - `'exact-only'` — income lines (any source), `mortgage-payment` lines, and
-    statement-basis `credit-card` bills. Never gap-reduced.
-  - `'full'` — recurring and planned (one-off/repeating) expense lines. Eligible for both
-    phases.
+  - `'exact-only'` — income lines (any source), `mortgage-payment` lines, statement-basis
+    `credit-card` bills, and recurring/planned expense lines whose item is flagged
+    `isFixedAmount` (the item modal's "Fixed amount" checkbox; a recurring item's flag
+    also governs its overridden occurrences). Never gap-reduced — a fixed-price bill is
+    either exact-matched Paid or stands at its full amount, and it is excluded from its
+    category's blend denominator.
+  - `'full'` — recurring and planned (one-off/repeating) expense lines without
+    `isFixedAmount`. Eligible for both phases.
   - `'none'` — `budget` and `goal` lines, and open-cycle/forecast-basis `credit-card`
     bills, left at their planned amount untouched (the open cycle already blends
     actual-vs-forecast spend inside `computeCardBilling`; re-actualizing it here would

@@ -207,7 +207,7 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
   - an always-expanded **Insights** section — `getSplitInsights(monthsBack = 12)`
     (`src/lib/actions/split-groups.ts`; cached summaries → overlapping months' chunks →
     the pure `computeSplitInsights`) drives two lazy ECharts: `split-spend-chart.tsx`
-    (stacked spend, By group / By member / **By category** toggle; tooltips append each
+    (stacked spend, **By member (default) / By category / By group** toggle; tooltips append each
     series' share of the month total as a percentage, and By-member mode also renders
     in-bar `{pct}%` labels — suppressed under 8% or on empty months so thin slices stay
     clean. Category mode buckets the engine's full `spendByCategory` through the pure
@@ -224,7 +224,13 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
     payer who also consumed shows only their net), mirroring the imported-row fallback
     in `buildSplitBudgetEntries`. **Running net** baselines each group just before the
     window (`totalNetByUserId[viewer] − Σ window viewer net`) then accumulates
-    month-by-month, summed across groups.
+    month-by-month, summed across groups. Each chart's plain-words description
+    (`describeSplitSpend`/`describeSplitNet`, `src/lib/chart-descriptions.ts`) covers the
+    whole window AND the current month: "This month so far: €X" (or "No shared expenses
+    yet this month"), a typical-month comparison (average over nonzero prior months,
+    emitted only at ≥2 of them), a mode-aware "This month, {X} leads instead" when the
+    current month's top group/category/payer differs from the window's, and the net
+    chart's "This month it moved up/down €X so far".
   - Group cards **reorder via jiggle mode** (root `AGENTS.md` → "Motion"): a long-press
     enters the mode, drag/drop or arrow keys reorder, and the flat id order persists to
     `UserPreferences.splitGroupOrder` (`updateSplitGroupOrder`, sanitized against the
@@ -233,11 +239,16 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
     duration of jiggle mode and reverts to the 2-up grid once it exits.
 - `/split/[id]` — balance banner, a **"Last 30 days" insights card**
   (`src/components/split/group-period-card.tsx`, between the banner and the recurring
-  rules; hidden when the group has no expenses): total spend headline, a segmented
-  who-paid bar tinted with each member's `getAvatarColor` (`role="img"` + descriptive
-  label) with an avatar/name/%/amount legend, and a default-closed `.collapse-grid`
-  expander holding top-3 category chips (`CategoryIcon`), top-3 single expenses, and
-  plain-words sentences from `describeGroupPeriod`. All math in the pure
+  rules; hidden when the group has no expenses): total spend headline and a
+  default-**open** `.collapse-grid` expander holding two small **CSS mini-treemaps**
+  side by side (1-col on mobile) — "By category" (top 5 + an 'Other' bucket, tiles
+  tinted `getCategoryColor`, top-3 legend with amounts) and "Who paid" (tiles tinted
+  each member's `getAvatarColor`, avatar/name/%/amount legend) — both laid out by the
+  pure slice-and-dice `computeTreemapLayout` (`src/lib/treemap-layout.ts`, unit-tested);
+  each treemap is `role="img"` whose label carries names + percentages only (money
+  lives in the legends and `title` tooltips). Below them: top-3 single expenses and
+  plain-words sentences from `describeGroupPeriod`. Collapsed, the card is just the
+  headline + toggle. All math in the pure
   `computeGroupPeriodInsights(members, rows, fromDate, toDate)`
   (`src/lib/split-insights.ts`) over the already-loaded expense chunks — the 30-day
   window spans at most two calendar months, always inside the initial 3-chunk load, so
@@ -749,18 +760,33 @@ computation rather than a pool claim.
   (expired/expiring consent or a failing sync), fetched independently via
   `getBankConnectionsNeedingAttention` so it never delays the glance; its action button
   routes to `/bank`, where the "Renew consent" button lives;
-- a **"this month" glance tile**: the primary account's projected end-of-month
-  balance + a one-line sentiment ("You're on track" / spending-more-than-earning /
-  ends-in-the-red), computed from `getProjection` for the first non-archived account
-  (fetched independently so it never blocks the split data). Tapping it opens a
-  **plain-words breakdown dialog** (starting balance + income − spending = expected
-  end balance, with an Overview link inside);
+- a **top glance row** — bank balances first, the projection beside them:
+  - an **"Accounts & cards" strip**: compact per-account tiles (2-col grid) from the
+    `getHomeBankGlance` action — every non-excluded bank link with at least one
+    transaction in the last 30 days (`txDisplayDate`, any status — a pending row counts
+    as activity); cash/savings tiles show `lastBalance` (negative in red), card tiles
+    show live used amount `/ limit` (`effectiveCardNumbers`) with a thin used-ratio bar
+    (amber at ≥80%; no bar when no limit is known). Tiles link to `/bank`, follow the
+    user's `bankAccountOrder`, format each in its own currency (no aggregate), and the
+    strip disappears entirely when bank sync is unconfigured or nothing was active;
+  - the **"this month" glance tile**: the primary account's projected end-of-month
+    balance + a one-line sentiment ("You're on track" / spending-more-than-earning /
+    ends-in-the-red), computed from `getProjection` for the first non-archived account
+    (fetched independently so it never blocks the split data). Beside the strip it
+    renders compact (`sm:w-64`); with no strip it reverts to full width. Tapping it
+    opens a **plain-words breakdown dialog** (starting balance + income − spending =
+    expected end balance, with an Overview link inside). The region's skeleton waits
+    for the bank fetch too — the row's geometry depends on whether bank rows exist;
 - a greeting (adding a shared expense happens via the global quick-add FAB — see
   §1 — which is always visible on Home);
-- **split balances**: per-group net for the logged-in user (via `getSplitGroupView`)
-  plus the overall net;
-- **cross-group activity**: `getSplitActivity(5)` (reads only each group's newest ~3
-  month chunks) rendered by `SplitActivityFeed`, showing each actor's `<UserAvatar>` and
+- one merged **Split card**: an overall-position line from `aggregatePairwiseNets`'
+  `totalByCurrency` (single currency → colored owed/owe amount; several → a neutral
+  "Balances across multiple currencies" — never a naive cross-currency sum), an
+  "All groups" link, per-group **tiles** in a 2-col (3-col ≥sm) grid (emoji, name,
+  counterparty avatar, "you're owed / you owe €X" phrase that wraps rather than
+  truncates), then a divided **Recent activity** section: `getSplitActivity(5)` (reads
+  only each group's newest ~3 month chunks) rendered by `SplitActivityFeed`
+  (`emptyText="No recent activity"`), showing each actor's `<UserAvatar>` and
   `added by {actorName}` ("added by You" for own rows); clicking an event navigates to
   its group;
 - a **feature grid** built from the shared `navItems` (minus `home`).
@@ -959,16 +985,14 @@ covered in depth in root `AGENTS.md` → "Demo mode"; the feature-level summary:
 
 - **Purpose & scope**: hides numbers on screen and in screenshots. `formatRate`, input
   fields, and CSV/JSON exports are **not** masked.
-- **Exemptions**: `/mortgage` and `/split` (exact or prefix-with-slash) keep real values
-  visible — those pages are usually the reason you're demoing, and their math needs real
-  numbers on screen (`isDemoExemptPath`).
+- **No exemptions**: every page masks, `/mortgage` and `/split` included.
 - **Per-device, not per-account**: the on/off state is `localStorage`
   (`DEMO_MODE_STORAGE_KEY = 'demo-mode'`), never a `UserPreferences` field — it's about
   the screen you're showing, not the user. A `storage` listener in `AppLayout` syncs the
   toggle across the origin's open tabs/windows (e.g. the installed PWA window).
 - **Toggles**: the user-menu item (`nav-config.tsx`) and the command palette
   (`action-demo-mode`). `AppLayout` shows a fixed "Demo" indicator pill (eye-off icon,
-  click to exit; its title notes when the current page is exempt).
+  click to exit).
 - **How masking propagates** (so charts/tables stay correct across a toggle): the mask
   flag lives on `globalThis` so every chunk reads one shared boolean; a chart's
   ECharts-`option` `useMemo` must list `demoMasked` in its deps AND the ECharts element

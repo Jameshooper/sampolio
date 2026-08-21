@@ -4,11 +4,14 @@ import { z } from 'zod';
 import { headers } from 'next/headers';
 import { updateTag } from 'next/cache';
 import { auth } from '@/lib/auth';
+import { format, subDays } from 'date-fns';
 import type {
   ApiResponse,
+  BankAccountRole,
   BankConnection,
   BankSyncRun,
   BankTransaction,
+  Currency,
   FinancialAccount,
 } from '@/types';
 import {
@@ -23,6 +26,7 @@ import {
   cachedGetBankSyncRuns,
   cachedGetBankTransactions,
   cachedGetAccountProjectionData,
+  cachedGetUserPreferences,
 } from '@/lib/db/cached';
 import { detectRecurringCandidates, type RecurringSuggestion, type ExistingItemLike } from '@/lib/recurring-detection';
 import { getMortgageTransfersForAccount, getLinkedCashBankTransactions } from '@/lib/projection-inputs';
@@ -33,7 +37,14 @@ import { redactBankError } from '@/lib/bank/client';
 import { getAspspDetailsCached } from '@/lib/bank/aspsp-info';
 import { computeCardBilling, transactionsForCycle, toCardTxn, isCardPayment } from '@/lib/bank/card-billing';
 import { isBankFeatureConfigured, MIN_MANUAL_REFRESH_INTERVAL_MS } from '@/lib/bank/constants';
-import { getConsentExpiryInfo, isSyncFailing, effectiveCardNumbers } from '@/lib/bank-utils';
+import {
+  getConsentExpiryInfo,
+  isSyncFailing,
+  effectiveCardNumbers,
+  maskIban,
+  sortConnectionsByAccountOrder,
+  txDisplayDate,
+} from '@/lib/bank-utils';
 import {
   startBankConnectionSchema,
   updateBankAccountLinkSchema,
@@ -345,6 +356,88 @@ export async function getCardLiabilities(): Promise<ApiResponse<CardLiability[]>
   } catch (error) {
     console.error('Get card liabilities error:', error);
     return { success: false, error: 'Failed to compute card liabilities' };
+  }
+}
+
+/** One actively-used bank account/card, as shown on the Home glance strip. */
+export interface HomeBankAccountGlance {
+  linkId: string;
+  /** Display label: customName || name || masked IBAN || a role fallback. Raw IBANs never leave the server. */
+  label: string;
+  role: BankAccountRole;
+  currency: Currency;
+  /** cash/savings/other: link.lastBalance (currency units; may be negative). */
+  balance?: number;
+  /** credit-card: effectiveCardNumbers(link) values. */
+  used?: number;
+  creditLimit?: number;
+  availableCredit?: number;
+}
+
+/** How far back a transaction must be to count an account as "actively used". */
+const HOME_GLANCE_ACTIVITY_DAYS = 30;
+
+/**
+ * Balances for the Home dashboard's "Accounts & cards" strip: every linked
+ * account with at least one transaction in the last 30 days, in the user's own
+ * bank-page order. Pending rows count too — a hold is the strongest signal an
+ * account is in active use.
+ *
+ * Reads cached queries only (no new cache tags, no network). Deliberately does
+ * NOT run `computeCardBilling` — the strip shows the live owed/limit figures,
+ * not a statement forecast. Unconfigured bank sync simply yields no
+ * connections, hence an empty list and no strip.
+ */
+export async function getHomeBankGlance(): Promise<ApiResponse<HomeBankAccountGlance[]>> {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) return { success: false, error: 'Unauthorized' };
+    const userId = session.user.id;
+    const connections = await cachedGetBankConnections(userId);
+    const prefs = await cachedGetUserPreferences(userId);
+    const ordered = sortConnectionsByAccountOrder(connections, prefs?.bankAccountOrder);
+    const cutoff = format(subDays(new Date(), HOME_GLANCE_ACTIVITY_DAYS), 'yyyy-MM-dd');
+
+    const out: HomeBankAccountGlance[] = [];
+    for (const conn of ordered) {
+      for (const link of conn.linkedAccounts) {
+        if (link.isExcluded) continue;
+        const txs = await cachedGetBankTransactions(userId, link.id);
+        if (!txs.some((t) => txDisplayDate(t) >= cutoff)) continue;
+        const label =
+          link.customName ||
+          link.name ||
+          maskIban(link.iban) ||
+          (link.accountRole === 'credit-card' ? 'Credit card' : 'Account');
+        if (link.accountRole === 'credit-card') {
+          const eff = effectiveCardNumbers(link);
+          // A card the bank tells us nothing about is noise, not information.
+          if (typeof eff.outstanding !== 'number' && typeof eff.availableCredit !== 'number') continue;
+          out.push({
+            linkId: link.id,
+            label,
+            role: link.accountRole,
+            currency: link.currency,
+            used: eff.outstanding ?? undefined,
+            creditLimit: eff.creditLimit ?? undefined,
+            availableCredit: eff.availableCredit ?? undefined,
+          });
+        } else {
+          if (typeof link.lastBalance !== 'number') continue;
+          out.push({
+            linkId: link.id,
+            label,
+            role: link.accountRole,
+            currency: link.currency,
+            balance: link.lastBalance,
+          });
+        }
+      }
+    }
+    return { success: true, data: out };
+  } catch (error) {
+    console.error('Get home bank glance error:', error);
+    return { success: false, error: 'Failed to load bank balances' };
   }
 }
 

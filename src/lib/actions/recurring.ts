@@ -22,6 +22,7 @@ const createRecurringItemSchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}$/, 'Invalid date format (YYYY-MM)'),
   endDate: z.string().regex(/^\d{4}-\d{2}$/).optional(),
   paidByCardLinkId: z.string().optional(),
+  isFixedAmount: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -35,6 +36,7 @@ const updateRecurringItemSchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}$/).optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}$/).optional().nullable(),
   paidByCardLinkId: z.string().optional().nullable(),
+  isFixedAmount: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
 

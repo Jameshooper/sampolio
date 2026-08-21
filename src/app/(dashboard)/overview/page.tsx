@@ -38,7 +38,7 @@ import { NetWorthExplainDialog } from '@/components/overview/net-worth-explain-d
 import { WealthDistribution } from '@/components/overview/wealth-distribution';
 import { plainTerm, helpText } from '@/lib/plain-language';
 import { PlanCheckCard } from '@/components/overview/forecast-vs-actual-card';
-import { MdInfo, MdSync, MdShowChart, MdEuro, MdAccountBalanceWallet, MdBarChart, MdGroup, MdCreditCard, MdArrowForward, MdAddCircle, MdRemoveCircle, MdHouse, MdHomeWork } from 'react-icons/md';
+import { MdSync, MdShowChart, MdEuro, MdAccountBalanceWallet, MdBarChart, MdGroup, MdCreditCard, MdArrowForward, MdAddCircle, MdRemoveCircle, MdHouse, MdHomeWork } from 'react-icons/md';
 
 type EntityCategory = 'cash' | 'investments' | 'receivables' | 'debts';
 
@@ -65,56 +65,6 @@ const SCOPE_OPTIONS = [
     { label: 'Total assets', value: 'total' },
     { label: 'Liquid', value: 'liquid' },
 ];
-
-interface ImpactItem {
-    name: string;
-    amount: number;
-    type: 'income' | 'expense' | 'valuation';
-    entityType?: string;
-    entityId?: string;
-}
-
-function ImpactPanel({ items, currency = 'EUR' as Currency }: { items: ImpactItem[]; currency?: Currency }) {
-    const { theme } = useTheme();
-    const isDark = theme === 'dark';
-
-    const sortedItems = [...items].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 5);
-
-    if (sortedItems.length === 0) {
-        return (
-            <div className={`text-center py-6 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                <MdInfo size={24} className="mb-2" />
-                <p>No significant changes this month</p>
-            </div>
-        );
-    }
-
-    return (
-        <div className="space-y-3">
-            {sortedItems.map((item, index) => (
-                <div
-                    key={index}
-                    className={`flex items-center justify-between p-3 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-gray-50'
-                        }`}
-                >
-                    <div className="flex items-center gap-3">
-                        <i className={`pi ${item.type === 'income' ? 'pi-arrow-up text-green-500' :
-                            item.type === 'expense' ? 'pi-arrow-down text-red-500' :
-                                'pi-chart-line text-blue-500'
-                            }`} />
-                        <span className={isDark ? 'text-gray-200' : 'text-gray-700'}>
-                            {item.name}
-                        </span>
-                    </div>
-                    <span className={`font-medium ${item.amount >= 0 ? 'text-green-500' : 'text-red-500'
-                        }`}>
-                        {item.amount >= 0 ? '+' : ''}{formatCurrency(item.amount, currency)}
-                    </span>
-                </div>
-            ))}
-        </div>
-    );
-}
 
 export default function OverviewPage() {
     const router = useRouter();
@@ -479,29 +429,6 @@ export default function OverviewPage() {
         return { current: currentMonth, previous: prevMonth };
     }, [projection, currentYearMonth]);
 
-    // Mock impact items (in real app, calculate from projection changes)
-    const impactItems: ImpactItem[] = useMemo(() => {
-        const items: ImpactItem[] = [];
-
-        // Add top income sources. Use the account's current balance (bank-sync
-        // snapshot when linked, else the manual starting value) so a synced
-        // account reflects the bank, not the stale manually-entered start.
-        accounts.forEach(a => {
-            const balance = cashCurrentBalances.get(a.id) ?? a.startingBalance;
-            if (balance > 0) {
-                items.push({
-                    name: `${a.name} balance`,
-                    amount: balance,
-                    type: 'income',
-                    entityType: 'cash-account',
-                    entityId: a.id,
-                });
-            }
-        });
-
-        return items.slice(0, 5);
-    }, [accounts, cashCurrentBalances]);
-
     // Utilization ratio for the credit-card KPI's progress bar; drives its
     // color (green/yellow/red) independently of the tile's own `severity`.
     const cardUtilization = cardCredit ? (cardCredit.limit - cardCredit.available) / cardCredit.limit : null;
@@ -782,25 +709,8 @@ export default function OverviewPage() {
                     </Card>
                 </div>
 
-                {/* This Month Impact + plan-vs-reality feedback loop */}
+                {/* Plan-vs-reality feedback loop */}
                 <div className="space-y-6">
-                    <Card>
-                        <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-gray-100' : 'text-gray-900'}`}>
-                            This Month Impact
-                        </h2>
-                        <ImpactPanel items={impactItems} currency={displayCurrency} />
-
-                        <div className="mt-4 pt-4 border-t border-gray-700">
-                            <Button
-                                label="View Month Details"
-                                icon={<MdArrowForward />}
-                                iconPos="right"
-                                text
-                                className="w-full"
-                                onClick={() => router.push('/cashflow')}
-                            />
-                        </div>
-                    </Card>
                     {planCheck && (
                         <PlanCheckCard
                             monthly={planCheck.monthly}
@@ -808,6 +718,14 @@ export default function OverviewPage() {
                             currency={displayCurrency}
                         />
                     )}
+                    <Button
+                        label="View month details"
+                        icon={<MdArrowForward />}
+                        iconPos="right"
+                        text
+                        className="w-full"
+                        onClick={() => router.push('/cashflow')}
+                    />
                 </div>
             </div>
 

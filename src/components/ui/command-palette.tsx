@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { InputText } from 'primereact/inputtext';
-import { MdHome, MdEuro, MdSettings, MdSync, MdAddCircle, MdRemoveCircle, MdSearch, MdHouse, MdLuggage, MdAccountBalance, MdGroups, MdInsights, MdFlag, MdFlightTakeoff, MdVisibilityOff } from 'react-icons/md';
+import { MdHome, MdSpaceDashboard, MdSettings, MdSync, MdAddCircle, MdRemoveCircle, MdSearch, MdHouse, MdLuggage, MdAccountBalance, MdGroups, MdInsights, MdFlag, MdFlightTakeoff, MdVisibilityOff } from 'react-icons/md';
 import { useTheme } from '@/components/providers/theme-provider';
 import { useAppContext } from '@/components/layout/app-layout';
 import type { Command, CommandType } from '@/types';
@@ -42,7 +42,7 @@ const NAVIGATION_COMMANDS: Command[] = [
         label: 'Go to Overview',
         description: 'Wealth dashboard with net worth and projections',
         type: 'navigate',
-        icon: <MdInsights />,
+        icon: <MdSpaceDashboard />,
         keywords: ['overview', 'dashboard', 'wealth', 'net worth'],
         action: () => { },
     },
@@ -51,7 +51,7 @@ const NAVIGATION_COMMANDS: Command[] = [
         label: 'Go to Cashflow',
         description: 'Cash accounts and monthly projections',
         type: 'navigate',
-        icon: <MdEuro />,
+        icon: <MdInsights />,
         keywords: ['cash', 'flow', 'monthly', 'income', 'expense'],
         action: () => { },
     },

@@ -81,6 +81,7 @@ export async function createRecurringItem(
     isShared: data.isShared,
     shareRatio: data.shareRatio,
     paidByCardLinkId: data.paidByCardLinkId,
+    isFixedAmount: data.isFixedAmount,
     isActive: data.isActive ?? true,
     createdAt: now,
     updatedAt: now,

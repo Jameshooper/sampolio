@@ -93,6 +93,8 @@ export async function createPlannedItem(
     shareRatio: data.shareRatio,
     // Charged to a credit card (excluded from direct cash; rolls into card bill)
     paidByCardLinkId: data.paidByCardLinkId,
+    // Fixed-price bill: current-month actualization never gap-estimates it
+    isFixedAmount: data.isFixedAmount,
     // Reimbursement tracking (one-off)
     isReimbursable: data.isReimbursable,
     reimbursementStatus: data.isReimbursable ? 'pending' : undefined,

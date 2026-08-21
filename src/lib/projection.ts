@@ -404,6 +404,11 @@ export function calculateProjection(
     const { year, month } = parseYearMonth(yearMonth);
     const incomeBreakdown: ProjectionLineItem[] = [];
     const expenseBreakdown: ProjectionLineItem[] = [];
+    // Lines whose source item is flagged `isFixedAmount` — they downgrade from
+    // the 'full' actualization policy to 'exact-only' (never gap-reduced by
+    // other spend in their category). Keyed by object identity like
+    // cardLinePolicy below, so this month's line objects are naturally distinct.
+    const fixedAmountLines = new Set<ProjectionLineItem>();
 
     // Process recurring items
     for (const item of recurringItems) {
@@ -444,6 +449,9 @@ export function calculateProjection(
         source: 'recurring',
         isOverridden: !!override,
       };
+      // The RECURRING item's flag governs even when an override supplies this
+      // month's amount — an override inherits the parent item's fixedness.
+      if (item.isFixedAmount) fixedAmountLines.add(lineItem);
 
       if (item.type === 'income') {
         incomeBreakdown.push(lineItem);
@@ -480,6 +488,7 @@ export function calculateProjection(
         category: item.category,
         source: 'planned-one-off',
       };
+      if (item.isFixedAmount) fixedAmountLines.add(lineItem);
 
       if (item.type === 'income') {
         incomeBreakdown.push(lineItem);
@@ -517,6 +526,7 @@ export function calculateProjection(
         category: item.category,
         source: 'planned-repeating',
       };
+      if (item.isFixedAmount) fixedAmountLines.add(lineItem);
 
       if (item.type === 'income') {
         incomeBreakdown.push(lineItem);
@@ -682,7 +692,10 @@ export function calculateProjection(
         ...expenseBreakdown.map((line): ActualizableLine => {
           let policy: ActualMatchPolicy;
           if (line.source === 'recurring' || line.source === 'planned-one-off' || line.source === 'planned-repeating') {
-            policy = 'full';
+            // A fixed-amount bill is never an estimate: it is either paid in
+            // full (exact match) or still fully outstanding — the category-gap
+            // blend must neither reduce it nor count it in its denominator.
+            policy = fixedAmountLines.has(line) ? 'exact-only' : 'full';
           } else if (line.source === 'mortgage-payment') {
             policy = 'exact-only';
           } else if (line.source === 'credit-card') {

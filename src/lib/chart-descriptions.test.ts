@@ -355,6 +355,153 @@ describe('describeSplitSpend', () => {
     it('handles no spending', () => {
         expect(describeSplitSpend(insights({ months: ['2026-07'] }), 'group', fmt)[0]).toContain('no shared spending');
     });
+
+    // --- current-month sentences ------------------------------------------
+    // `months` always ends at the current calendar month, so the last entry is
+    // "this month" — the function never reads the clock.
+
+    it('reports what this month has shared so far', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            groups: [{ id: 'g1', name: 'Flat', currency: 'EUR' }],
+            spendByGroup: { '2026-06': { g1: 8000 }, '2026-07': { g1: 3000 } },
+        });
+        expect(describeSplitSpend(ins, 'group', fmt).join(' ')).toContain('This month so far: €3000.');
+    });
+
+    it('says when nothing has been shared yet this month', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            groups: [{ id: 'g1', name: 'Flat', currency: 'EUR' }],
+            spendByGroup: { '2026-06': { g1: 8000 }, '2026-07': {} },
+        });
+        const text = describeSplitSpend(ins, 'group', fmt).join(' ');
+        expect(text).toContain('No shared expenses yet this month.');
+        expect(text).not.toContain('This month so far');
+    });
+
+    it('compares this month with a typical month (above)', () => {
+        const ins = insights({
+            months: ['2026-05', '2026-06', '2026-07'],
+            groups: [{ id: 'g1', name: 'Flat', currency: 'EUR' }],
+            spendByGroup: {
+                '2026-05': { g1: 1000 },
+                '2026-06': { g1: 3000 },
+                '2026-07': { g1: 5000 },
+            },
+        });
+        // prior months average (1000 + 3000) / 2 = 2000, and 5000 beats it
+        expect(describeSplitSpend(ins, 'group', fmt).join(' ')).toContain(
+            "That's already more than your typical month of €2000."
+        );
+    });
+
+    it('compares this month with a typical month (below)', () => {
+        const ins = insights({
+            months: ['2026-05', '2026-06', '2026-07'],
+            groups: [{ id: 'g1', name: 'Flat', currency: 'EUR' }],
+            spendByGroup: {
+                '2026-05': { g1: 4000 },
+                '2026-06': { g1: 6000 },
+                '2026-07': { g1: 1000 },
+            },
+        });
+        expect(describeSplitSpend(ins, 'group', fmt).join(' ')).toContain(
+            'Your typical month is about €5000.'
+        );
+    });
+
+    it('skips the typical-month sentence with only one prior month of spending', () => {
+        const ins = insights({
+            months: ['2026-05', '2026-06', '2026-07'],
+            groups: [{ id: 'g1', name: 'Flat', currency: 'EUR' }],
+            // May had nothing, so only June counts as a prior month
+            spendByGroup: { '2026-05': {}, '2026-06': { g1: 6000 }, '2026-07': { g1: 1000 } },
+        });
+        const text = describeSplitSpend(ins, 'group', fmt).join(' ');
+        expect(text).not.toContain('typical month');
+    });
+
+    it('flags a different group leading this month', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            groups: [
+                { id: 'g1', name: 'Flat', currency: 'EUR' },
+                { id: 'g2', name: 'Trip', currency: 'EUR' },
+            ],
+            spendByGroup: {
+                '2026-06': { g1: 9000, g2: 500 },
+                '2026-07': { g1: 200, g2: 3000 },
+            },
+        });
+        const text = describeSplitSpend(ins, 'group', fmt).join(' ');
+        expect(text).toContain('This month, "Trip" leads instead.');
+    });
+
+    it('flags a different payer leading this month', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            groups: [{ id: 'g1', name: 'Flat', currency: 'EUR' }],
+            members: [
+                { userId: 'u1', name: 'Ana' },
+                { userId: 'u2', name: 'Bob' },
+            ],
+            spendByGroup: { '2026-06': { g1: 9000 }, '2026-07': { g1: 2000 } },
+            paidByMember: { '2026-06': { u1: 9000 }, '2026-07': { u2: 2000 } },
+        });
+        const text = describeSplitSpend(ins, 'member', fmt).join(' ');
+        expect(text).toContain('Ana fronts the most');
+        expect(text).toContain('This month, Bob leads instead.');
+    });
+
+    it('flags a different category leading this month', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            groups: [{ id: 'g1', name: 'Flat', currency: 'EUR' }],
+            spendByGroup: { '2026-06': { g1: 9000 }, '2026-07': { g1: 2000 } },
+            spendByCategory: { '2026-06': { Rent: 9000 }, '2026-07': { Groceries: 2000 } },
+            categories: ['Rent', 'Groceries'],
+        });
+        expect(describeSplitSpend(ins, 'category', fmt).join(' ')).toContain(
+            'This month, Groceries leads instead.'
+        );
+    });
+
+    it('omits the leader-shift sentence when the same group still leads', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            groups: [
+                { id: 'g1', name: 'Flat', currency: 'EUR' },
+                { id: 'g2', name: 'Trip', currency: 'EUR' },
+            ],
+            spendByGroup: {
+                '2026-06': { g1: 9000, g2: 500 },
+                '2026-07': { g1: 3000, g2: 200 },
+            },
+        });
+        expect(describeSplitSpend(ins, 'group', fmt).join(' ')).not.toContain('leads instead');
+    });
+
+    it('keeps the mixed-currency caveat as the final sentence', () => {
+        const ins = insights({
+            months: ['2026-05', '2026-06', '2026-07'],
+            currencies: ['EUR', 'USD'],
+            groups: [
+                { id: 'g1', name: 'Flat', currency: 'EUR' },
+                { id: 'g2', name: 'Trip', currency: 'USD' },
+            ],
+            spendByGroup: {
+                '2026-05': { g1: 4000 },
+                '2026-06': { g1: 6000 },
+                '2026-07': { g2: 9000 },
+            },
+        });
+        const out = describeSplitSpend(ins, 'group', fmt);
+        expect(out[out.length - 1]).toBe('Amounts mix more than one currency, so totals are rough.');
+        // …and the new sentences really did land before it
+        expect(out.join(' ')).toContain('This month so far');
+        expect(out.join(' ')).toContain('leads instead');
+    });
 });
 
 describe('describeSplitNet', () => {
@@ -398,6 +545,41 @@ describe('describeSplitNet', () => {
             viewerNetByMonth: { '2026-06': 0, '2026-07': 0 },
         });
         expect(describeSplitNet(ins, fmt).join(' ')).not.toContain('moved it most');
+    });
+
+    it('reports how far this month has moved the balance up', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            viewerNetByMonth: { '2026-06': 1000, '2026-07': 2500 },
+            viewerNetBaseline: 500,
+        });
+        expect(describeSplitNet(ins, fmt).join(' ')).toContain('This month it moved up €1500 so far.');
+    });
+
+    it('reports how far this month has moved the balance down', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            viewerNetByMonth: { '2026-06': 4000, '2026-07': 1000 },
+        });
+        expect(describeSplitNet(ins, fmt).join(' ')).toContain('This month it moved down €3000 so far.');
+    });
+
+    it('measures a single-month window against the pre-window baseline', () => {
+        const ins = insights({
+            months: ['2026-07'],
+            viewerNetByMonth: { '2026-07': 9000 },
+            viewerNetBaseline: 8000,
+        });
+        // 1000, not the whole 9000 position
+        expect(describeSplitNet(ins, fmt).join(' ')).toContain('This month it moved up €1000 so far.');
+    });
+
+    it('omits the this-month sentence when the balance barely moved', () => {
+        const ins = insights({
+            months: ['2026-06', '2026-07'],
+            viewerNetByMonth: { '2026-06': 4000, '2026-07': 4000 },
+        });
+        expect(describeSplitNet(ins, fmt).join(' ')).not.toContain('This month it moved');
     });
 });
 

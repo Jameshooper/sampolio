@@ -36,6 +36,9 @@ export const cashflowItemSchema = z
     // Expense charged to a credit card
     paidByCardLinkId: z.string().optional(),
 
+    // Fixed-price expense (never gap-estimated by current-month actualization)
+    isFixedAmount: z.boolean().optional(),
+
     // One-off schedule
     scheduledDate: ymField,
 

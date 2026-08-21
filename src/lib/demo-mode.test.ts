@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { maskMoney, isDemoExemptPath, isDemoMasked, setDemoMask } from './demo-mode';
+import { maskMoney, isDemoMasked, setDemoMask } from './demo-mode';
 import { formatCurrency, formatCents } from './constants';
 
 // The placeholder mask: currency symbol + three/two U+2731 HEAVY ASTERISKs
@@ -24,22 +24,6 @@ describe('maskMoney', () => {
   it('reuses whatever currency symbol it is given', () => {
     expect(maskMoney('$', false)).toBe('$✱✱✱,✱✱');
     expect(maskMoney('R$', true)).toBe('−R$✱✱✱,✱✱');
-  });
-});
-
-describe('isDemoExemptPath', () => {
-  it('exempts /mortgage and /split and their sub-paths', () => {
-    expect(isDemoExemptPath('/mortgage')).toBe(true);
-    expect(isDemoExemptPath('/mortgage/x')).toBe(true);
-    expect(isDemoExemptPath('/split')).toBe(true);
-    expect(isDemoExemptPath('/split/abc')).toBe(true);
-  });
-
-  it('does not exempt other pages or mere prefix collisions', () => {
-    expect(isDemoExemptPath('/')).toBe(false);
-    expect(isDemoExemptPath('/overview')).toBe(false);
-    expect(isDemoExemptPath('/splitters')).toBe(false);
-    expect(isDemoExemptPath('/mortgages-fake')).toBe(false);
   });
 });
 

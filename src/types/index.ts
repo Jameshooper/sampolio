@@ -154,6 +154,8 @@ export interface RecurringItem {
   // When set, this expense is charged to a credit card (BankAccountLink.id) — it
   // no longer hits cash directly; it rolls into that card's statement/forecast.
   paidByCardLinkId?: string;
+  /** Expense is always exactly this amount — current-month actualization never estimates a partial remainder for it. */
+  isFixedAmount?: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -179,6 +181,8 @@ export interface PlannedItem {
   shareRatio?: number; // 0-1, default 0.5
   // Charged to a credit card (BankAccountLink.id) — see RecurringItem.paidByCardLinkId.
   paidByCardLinkId?: string;
+  /** Expense is always exactly this amount — current-month actualization never estimates a partial remainder for it. */
+  isFixedAmount?: boolean;
   // Reimbursement tracking (one-off items only)
   isReimbursable?: boolean;
   reimbursementStatus?: 'pending' | 'received';
@@ -299,6 +303,7 @@ export interface CreateRecurringItemRequest {
   isShared?: boolean;
   shareRatio?: number;
   paidByCardLinkId?: string;
+  isFixedAmount?: boolean;
   isActive?: boolean;
 }
 
@@ -319,6 +324,7 @@ export interface CreatePlannedItemRequest {
   isShared?: boolean;
   shareRatio?: number;
   paidByCardLinkId?: string;
+  isFixedAmount?: boolean;
   isReimbursable?: boolean;
   expectedReimbursementMonth?: YearMonth;
   // For recurring item occurrence overrides

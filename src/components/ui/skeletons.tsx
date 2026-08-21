@@ -68,21 +68,19 @@ export function ListPageSkeleton({ rows = 5, showTitle = true }: { rows?: number
 }
 
 /**
- * Home dashboard: glance tile + split-balances card + a few activity rows.
- * (Was two skeletons split around an always-mounted quick-add card; the card
- * was removed in favor of the global FAB, so one contiguous block is correct.)
+ * Home dashboard: the top glance row (bank-balance strip + the projected
+ * end-of-month tile, stacked on mobile / side by side from `sm`) followed by the
+ * merged split card (per-group balance tiles + recent activity).
  */
 export function HomeSkeleton() {
   return (
     <DelayedSkeleton>
       <div className="w-full">
-        <Skeleton height="6rem" borderRadius="0.75rem" className="mb-5 w-full" />
-        <Skeleton height="9rem" borderRadius="0.75rem" className="mb-5 w-full" />
-        <div className="flex flex-col gap-2">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} height="2.5rem" borderRadius="0.5rem" className="w-full" />
-          ))}
+        <div className="flex flex-col sm:flex-row gap-3 mb-5">
+          <Skeleton className="flex-1" height="6.5rem" borderRadius="0.75rem" />
+          <Skeleton className="w-full sm:w-64" height="6.5rem" borderRadius="0.75rem" />
         </div>
+        <Skeleton height="13rem" borderRadius="0.75rem" className="mb-5 w-full" />
       </div>
     </DelayedSkeleton>
   );

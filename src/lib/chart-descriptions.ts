@@ -357,10 +357,40 @@ function sumByKey(byMonth: Record<string, Record<string, number>>, months: strin
     return out;
 }
 
+/** Sum one month→key→cents row into a single total. */
+function rowTotal(row: Record<string, number> | undefined): number {
+    if (!row) return 0;
+    return Object.values(row).reduce((s, v) => s + v, 0);
+}
+
+/**
+ * The key holding the largest value in a month→key→cents row (null when the row
+ * is empty or all non-positive). Ties keep the first key seen, so the result is
+ * deterministic for a given input.
+ */
+function topKeyOf(row: Record<string, number> | undefined): string | null {
+    if (!row) return null;
+    let best: string | null = null;
+    let bestValue = 0;
+    for (const [key, value] of Object.entries(row)) {
+        if (value > bestValue) {
+            best = key;
+            bestValue = value;
+        }
+    }
+    return best;
+}
+
 /**
  * Split spend chart: total shared spending over the window and who/which group
- * /category accounts for most of it. `fmt` formats integer cents (the caller
- * passes a cents formatter).
+ * /category accounts for most of it, then how the CURRENT month is going — what
+ * has been shared so far, how that compares with a typical month, and whether a
+ * different group/person/category is leading this month. `fmt` formats integer
+ * cents (the caller passes a cents formatter).
+ *
+ * `insights.months` always ends at the current calendar month (see
+ * `monthsWindow`), so "this month" is simply the last entry — the function stays
+ * pure and never reads the clock.
  */
 export function describeSplitSpend(
     insights: SplitInsights,
@@ -376,13 +406,18 @@ export function describeSplitSpend(
 
     const sentences: string[] = [`Across these months you shared ${fmt(grand)} in expenses.`];
 
+    // The whole-window leader, kept as a RAW key (group id / category / user id)
+    // so the current-month comparison below compares identities, not labels.
+    let windowTopKey: string | null = null;
+
     if (mode === 'group') {
         const ranked = insights.groups
-            .map((g) => ({ name: g.name, total: totalByGroup.get(g.id) ?? 0 }))
+            .map((g) => ({ id: g.id, name: g.name, total: totalByGroup.get(g.id) ?? 0 }))
             .filter((g) => g.total > 0)
             .sort((a, b) => b.total - a.total);
         const top = ranked[0];
         if (top) {
+            windowTopKey = top.id;
             sentences.push(
                 ranked.length > 1
                     ? `Most runs through "${top.name}" — ${shareToWords(top.total, grand)} of it.`
@@ -397,6 +432,7 @@ export function describeSplitSpend(
             .sort((a, b) => b.total - a.total);
         const top = ranked[0];
         if (top) {
+            windowTopKey = top.category;
             sentences.push(
                 ranked.length > 1
                     ? `${top.category} is the biggest category — ${shareToWords(top.total, grand)} of it.`
@@ -407,16 +443,59 @@ export function describeSplitSpend(
         const byMember = sumByKey(insights.paidByMember, insights.months);
         const grandPaid = Array.from(byMember.values()).reduce((s, v) => s + v, 0);
         const ranked = insights.members
-            .map((m) => ({ name: m.name, total: byMember.get(m.userId) ?? 0 }))
+            .map((m) => ({ userId: m.userId, name: m.name, total: byMember.get(m.userId) ?? 0 }))
             .filter((m) => m.total > 0)
             .sort((a, b) => b.total - a.total);
         const top = ranked[0];
         if (top) {
+            windowTopKey = top.userId;
             sentences.push(
                 ranked.length > 1
                     ? `${top.name} fronts the most money — ${shareToWords(top.total, grandPaid)} of it.`
                     : `${top.name} fronts all of it.`
             );
+        }
+    }
+
+    // How this month is going. `months` is oldest → newest and ends now.
+    const curMonth = insights.months[insights.months.length - 1];
+    if (curMonth) {
+        const cur = rowTotal(insights.spendByGroup[curMonth]);
+        sentences.push(cur > 0 ? `This month so far: ${fmt(cur)}.` : 'No shared expenses yet this month.');
+
+        // A typical month, from the earlier months that actually had spending.
+        const priorTotals = insights.months
+            .slice(0, -1)
+            .map((m) => rowTotal(insights.spendByGroup[m]))
+            .filter((t) => t > 0);
+        if (priorTotals.length >= 2) {
+            const avg = priorTotals.reduce((s, v) => s + v, 0) / priorTotals.length;
+            sentences.push(
+                cur > avg
+                    ? `That's already more than your typical month of ${fmt(avg)}.`
+                    : `Your typical month is about ${fmt(avg)}.`
+            );
+        }
+
+        // Has a different group/person/category taken the lead this month?
+        if (cur > 0 && windowTopKey) {
+            const curTopKey =
+                mode === 'group'
+                    ? topKeyOf(insights.spendByGroup[curMonth])
+                    : mode === 'category'
+                      ? topKeyOf(insights.spendByCategory[curMonth])
+                      : topKeyOf(insights.paidByMember[curMonth]);
+            if (curTopKey && curTopKey !== windowTopKey) {
+                if (mode === 'group') {
+                    const name = insights.groups.find((g) => g.id === curTopKey)?.name;
+                    if (name) sentences.push(`This month, "${name}" leads instead.`);
+                } else if (mode === 'category') {
+                    sentences.push(`This month, ${curTopKey} leads instead.`);
+                } else {
+                    const name = insights.members.find((m) => m.userId === curTopKey)?.name;
+                    if (name) sentences.push(`This month, ${name} leads instead.`);
+                }
+            }
         }
     }
 
@@ -434,7 +513,8 @@ export function describeSplitSpend(
  *
  * The monthly change is baseline-aware: the first month's delta is measured
  * against `viewerNetBaseline` (the position just before the window), never
- * against zero — otherwise month one would look like one giant swing.
+ * against zero — otherwise month one would look like one giant swing. The same
+ * deltas give the current month's move so far, said right after the position.
  */
 export function describeSplitNet(insights: SplitInsights, fmt: MoneyFn): string[] {
     const months = insights.months;
@@ -453,6 +533,19 @@ export function describeSplitNet(insights: SplitInsights, fmt: MoneyFn): string[
         sentences.push("Right now you're about settled up.");
     }
 
+    // Month-over-month changes (the chart's bars); the first is measured against
+    // the pre-window baseline.
+    const nets = months.map((m) => insights.viewerNetByMonth[m] ?? 0);
+    const deltas = nets.map((v, i) => v - (i === 0 ? insights.viewerNetBaseline : nets[i - 1]));
+
+    // How the current month has moved it so far.
+    const thisMonthMove = deltas[deltas.length - 1] ?? 0;
+    if (thisMonthMove > 0.5) {
+        sentences.push(`This month it moved up ${fmt(thisMonthMove)} so far.`);
+    } else if (thisMonthMove < -0.5) {
+        sentences.push(`This month it moved down ${fmt(Math.abs(thisMonthMove))} so far.`);
+    }
+
     let owed = 0;
     let owing = 0;
     for (const m of months) {
@@ -469,8 +562,6 @@ export function describeSplitNet(insights: SplitInsights, fmt: MoneyFn): string[
     }
 
     // The month that moved the balance most (bars on the chart).
-    const nets = months.map((m) => insights.viewerNetByMonth[m] ?? 0);
-    const deltas = nets.map((v, i) => v - (i === 0 ? insights.viewerNetBaseline : nets[i - 1]));
     let biggest = 0;
     for (let i = 1; i < deltas.length; i++) {
         if (Math.abs(deltas[i]) > Math.abs(deltas[biggest])) biggest = i;

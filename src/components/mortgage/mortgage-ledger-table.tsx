@@ -7,6 +7,7 @@ import { InputSwitch } from 'primereact/inputswitch';
 import { Tooltip } from 'primereact/tooltip';
 import { Tag } from 'primereact/tag';
 import { Button } from 'primereact/button';
+import { useAppContext } from '@/components/layout/app-layout';
 import { formatCurrency, formatYearMonthShort, formatRate } from '@/lib/constants';
 import { getCurrentYearMonth } from '@/lib/projection';
 import type { SharedMortgage, MortgageProjectionMonth, Currency } from '@/types';
@@ -69,6 +70,7 @@ export function MortgageLedgerTable({
 }) {
   const cur = (v: number) => formatCurrency(v, currency);
   const currentMonth = getCurrentYearMonth();
+  const demoMasked = useAppContext()?.demoMasked ?? false;
 
   // The next month still awaiting reconciliation (earliest elapsed forecast),
   // surfaced as a one-click action in the header.
@@ -303,7 +305,9 @@ export function MortgageLedgerTable({
           below lg) — desktop is untouched. */}
       <DataTable
         className="mortgage-ledger"
-        key={`ledger-${showBreakdown ? 'bd' : 'flat'}-${isSimple ? 's' : 'a'}-${hasSubsidy ? 'sub' : ''}-${mortgage.loans.length}-${mortgage.members.length}`}
+        // Remount when demo mode flips: DataTable's memoized internals keep
+        // stale formatCurrency output across re-renders otherwise.
+        key={`ledger-${showBreakdown ? 'bd' : 'flat'}-${isSimple ? 's' : 'a'}-${hasSubsidy ? 'sub' : ''}-${mortgage.loans.length}-${mortgage.members.length}-${demoMasked ? 'masked' : 'plain'}`}
         value={rows}
         scrollable
         scrollHeight="560px"

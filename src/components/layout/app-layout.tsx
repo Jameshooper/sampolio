@@ -18,7 +18,7 @@ import { CheckinNotifier } from '@/components/providers/checkin-notifier';
 import { getAccounts } from '@/lib/actions/accounts';
 import { getUserPreferences } from '@/lib/actions/user-preferences';
 import { MdAdd, MdVisibilityOff } from 'react-icons/md';
-import { isDemoExemptPath, setDemoMask, DEMO_MODE_STORAGE_KEY } from '@/lib/demo-mode';
+import { setDemoMask, DEMO_MODE_STORAGE_KEY } from '@/lib/demo-mode';
 import type { FinancialAccount, DrawerState, DisplayMode } from '@/types';
 
 interface AppLayoutProps {
@@ -55,7 +55,7 @@ interface AppContextValue {
     setBottomNavIds: (ids: string[] | null) => void;
     // Demo mode (UI-only monetary masking for showing the app to friends)
     demoMode: boolean;
-    /** Whether values render masked right now (demoMode AND not on an exempt page). */
+    /** Whether values render masked right now (mirrors `demoMode`). */
     demoMasked: boolean;
     setDemoMode: (on: boolean) => void;
 }
@@ -155,10 +155,10 @@ export function AppLayout({ children }: AppLayoutProps) {
     // Render-phase sync of the process-wide demo mask (see src/lib/demo-mode.ts).
     // Money formatters are pure and can't subscribe to React state, so AppLayout
     // pushes the effective flag here — DURING render, before returning JSX — so
-    // the first paint after a toggle (or after navigating onto/off an exempt
-    // page) already formats correctly; an effect would be one paint late. The
-    // write is idempotent, hence safe under StrictMode / concurrent re-renders.
-    const demoMasked = demoMode && !isDemoExemptPath(pathname);
+    // the first paint after a toggle already formats correctly; an effect would
+    // be one paint late. The write is idempotent, hence safe under StrictMode /
+    // concurrent re-renders.
+    const demoMasked = demoMode;
     setDemoMask(demoMasked);
 
     // Keyboard shortcuts — declared after openDrawer/selectedYearMonth
@@ -348,18 +348,13 @@ export function AppLayout({ children }: AppLayoutProps) {
                     <div className="hidden lg:block fixed top-0 inset-x-0 h-[env(safe-area-inset-top)] z-40 glass-chrome" />
 
                     {/* Demo-mode indicator pill — shown on ALL pages while demo mode
-                        is on (including the exempt /mortgage & /split pages, where the
-                        title notes amounts are still visible). Tap to turn it off.
+                        is on. Tap to turn it off.
                         z-45: above the mobile chrome (z-40), below overlays (z-50). */}
                     {demoMode && (
                         <button
                             type="button"
                             onClick={() => setDemoMode(false)}
-                            title={
-                                isDemoExemptPath(pathname)
-                                    ? 'Demo mode — amounts visible on this page'
-                                    : 'Demo mode — amounts hidden. Tap to show them again.'
-                            }
+                            title="Demo mode — amounts hidden. Tap to show them again."
                             aria-label="Demo mode active — tap to show amounts"
                             className="fixed z-[45] right-3 top-[calc(0.75rem+env(safe-area-inset-top))] rounded-full border surface-border bg-[var(--surface-card)]/80 backdrop-blur px-3 py-1.5 text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
                         >

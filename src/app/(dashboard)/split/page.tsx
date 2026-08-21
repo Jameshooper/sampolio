@@ -51,9 +51,9 @@ interface GroupCard {
 type SpendMode = 'group' | 'member' | 'category';
 
 const spendModeOptions = [
-  { label: 'By group', value: 'group' as const },
   { label: 'By member', value: 'member' as const },
   { label: 'By category', value: 'category' as const },
+  { label: 'By group', value: 'group' as const },
 ];
 
 const spendHowToRead: ReadCue[] = [
@@ -83,7 +83,7 @@ function SplitInsightsCharts({
   mixed: boolean;
 }) {
   const { demoMasked } = useAppContext() ?? {};
-  const [spendMode, setSpendMode] = useState<SpendMode>('group');
+  const [spendMode, setSpendMode] = useState<SpendMode>('member');
 
   const spendDescription = useMemo(
     () => describeSplitSpend(insights, spendMode, (n) => formatCents(n, currency)),

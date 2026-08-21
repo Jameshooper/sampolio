@@ -25,6 +25,7 @@ const createPlannedItemSchema = z.object({
   firstOccurrence: z.string().regex(/^\d{4}-\d{2}$/).optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}$/).optional(),
   paidByCardLinkId: z.string().optional(),
+  isFixedAmount: z.boolean().optional(),
   isReimbursable: z.boolean().optional(),
   expectedReimbursementMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
 }).refine(
@@ -56,6 +57,7 @@ const updatePlannedItemSchema = z.object({
   firstOccurrence: z.string().regex(/^\d{4}-\d{2}$/).optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}$/).optional().nullable(),
   paidByCardLinkId: z.string().optional().nullable(),
+  isFixedAmount: z.boolean().optional(),
   isReimbursable: z.boolean().optional(),
   expectedReimbursementMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
   reimbursementStatus: z.enum(['pending', 'received']).optional(),

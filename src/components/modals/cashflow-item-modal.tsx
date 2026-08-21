@@ -229,6 +229,7 @@ export function CashflowItemModal({
         endDate: '',
         isActive: true,
         paidByCardLinkId: '',
+        isFixedAmount: false,
         scheduledDate: getCurrentYearMonth(),
         isReimbursable: false,
         expectedReimbursementMonth: '',
@@ -454,6 +455,7 @@ export function CashflowItemModal({
                 endDate: r.endDate || '',
                 isActive: r.isActive,
                 paidByCardLinkId: r.paidByCardLinkId || '',
+                isFixedAmount: r.isFixedAmount ?? false,
             });
         } else if (item.sourceType === 'planned') {
             const p = orig as PlannedItem;
@@ -470,6 +472,7 @@ export function CashflowItemModal({
                 startDate: p.firstOccurrence || getCurrentYearMonth(),
                 endDate: p.endDate || '',
                 paidByCardLinkId: p.paidByCardLinkId || '',
+                isFixedAmount: p.isFixedAmount ?? false,
                 isReimbursable: !!p.isReimbursable,
                 expectedReimbursementMonth: p.expectedReimbursementMonth || '',
                 reimbursementStatus: p.reimbursementStatus || 'pending',
@@ -604,6 +607,7 @@ export function CashflowItemModal({
                     category: data.category || undefined,
                     scheduledDate: data.scheduledDate || getCurrentYearMonth(),
                     paidByCardLinkId: data.type === 'expense' ? (data.paidByCardLinkId || undefined) : undefined,
+                    isFixedAmount: data.type === 'expense' ? (data.isFixedAmount || undefined) : undefined,
                     // Explicit false on update clears status + expected month in the db layer.
                     isReimbursable: wantsReimbursement,
                     expectedReimbursementMonth: wantsReimbursement ? data.expectedReimbursementMonth : undefined,
@@ -628,6 +632,7 @@ export function CashflowItemModal({
                     endDate: data.endDate || undefined,
                     isActive: data.isActive,
                     paidByCardLinkId: data.type === 'expense' ? (data.paidByCardLinkId || undefined) : undefined,
+                    isFixedAmount: data.type === 'expense' ? (data.isFixedAmount || undefined) : undefined,
                 };
                 if (editingItem?.sourceType === 'recurring') {
                     await updateRecurringItem(selectedAccountId, editingItem.id, body);
@@ -1163,6 +1168,27 @@ export function CashflowItemModal({
                                 )}
                             />
                             <HelpTip text="If this is charged to a credit card, pick it here. The expense then stops hitting cash directly — it rolls into that card's statement (real bills when synced, forecast bills for future months), so it isn't double-counted with your card transactions." />
+                        </div>
+                    )}
+
+                    {/* Fixed amount (expenses only) */}
+                    {showMore && type === 'expense' && showAmountAndCategory && (
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <Controller
+                                    name="isFixedAmount"
+                                    control={control}
+                                    render={({ field }) => (
+                                        <Checkbox
+                                            inputId="fixed-amount"
+                                            checked={!!field.value}
+                                            onChange={e => field.onChange(e.checked ?? false)}
+                                        />
+                                    )}
+                                />
+                                <label htmlFor="fixed-amount" className="text-sm font-medium cursor-pointer">Fixed amount</label>
+                            </div>
+                            <HelpTip text="This bill is always exactly this amount. Don't estimate what's left from other spending in its category — only mark it paid when the matching bank payment appears." />
                         </div>
                     )}
 

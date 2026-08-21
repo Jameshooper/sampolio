@@ -65,16 +65,13 @@ Chart.js line/area chart (`src/components/charts/net-worth-chart.tsx`, via `prim
 - Time horizon selector: 6M, 1Y, 3Y, 5Y
 - Displays projected net worth at horizon end with absolute and percentage change; the tooltip enumerates every in-scope non-zero category
 
-### This Month Impact Panel
-Shows top income and expense items affecting the current month, with amounts and categories. Each account's "balance" line uses the same current balance as the Cash KPI (bank-synced value when available via `cashCurrentBalances`, else the manual starting value) — never the raw `startingBalance` when a synced bank balance exists.
-
 ### Plan Check Card ("Plan vs reality")
 `PlanCheckCard` (`src/components/overview/forecast-vs-actual-card.tsx`) — purely presentational; the page passes the primary active account's `{ monthly, retrospective }` from its existing `getProjection` calls (no second fetch). Two views behind a segmented month toggle, default chosen by `pickDefaultView` (this-month when actualized and the month is under way, else last closed month):
 
 - **Last month (deviation)**: `comparePlanToActual` (`src/lib/forecast-vs-actual.ts`, pure/tested) joins the **recurring** part of the current plan (`source === 'recurring' | 'planned-repeating'` only — one-offs would flood the list with fake "under plan" rows; injected card/mortgage/budget lines excluded) against the last retrospective month's actuals, recategorized from merchant names via `guessItemCategory`. Card-settlement actual lines (`source === 'credit-card'`) are dropped symmetrically — card-tagged plan items never appear in the cash breakdown either. Top-4 off-plan rows with worded verdicts ("€X more/less than planned", red/green), a bullet bar (actual fill + plan tick), and a `.collapse-grid` expander listing the actual merchant lines. Footers: on-plan count and an unmatched-spend total (≥ €20). `status: 'on'` inside `onPlanTolerance` = max(€5, 3% of planned).
 - **This month (progress)**: `summarizeMonthProgress` over the actualized `monthly[0]` lines — top-5 categories by planned, neutral "€X of €Y" (progress, never judged), expanders mirror `month-details-panel` (paid tag / "€X left" tag / line-through).
 
-Copy via `plainTerm`/`helpText` (`planCheck`, `overPlan`/`underPlan`/`onPlan`, `lastMonthBaseline`, `paidOfPlanned`). Returns `null` only when there's neither a retrospective nor an actualized month (manual accounts); otherwise empty views render an `EmptyState`.
+Copy via `plainTerm`/`helpText` (`planCheck`, `overPlan`/`underPlan`/`onPlan`, `lastMonthBaseline`, `paidOfPlanned`). Returns `null` only when there's neither a retrospective nor an actualized month (manual accounts); otherwise empty views render an `EmptyState`. It is the sole card in the chart grid's right column, with a full-width text "View month details" button → `/cashflow` beneath it.
 
 ### Quick Action Buttons
 Floating action buttons for common operations:

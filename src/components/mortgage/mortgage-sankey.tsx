@@ -171,13 +171,15 @@ export function MortgageOwnershipSankey({
         },
       ],
     };
-  }, [snapshot, currency, isDark, currentUserId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- formatCurrency output depends on demo mode
+  }, [snapshot, currency, isDark, currentUserId, demoMasked]);
 
   if (!option) return null;
 
   return (
     <ChartExplain chartLabel="Where the mortgage money goes" howToRead={howToRead} description={description} plainWordsLabel="In plain words">
       <ReactEChartsCore
+        key={demoMasked ? 'masked' : 'plain'}
         echarts={echarts}
         option={option}
         style={{ height: '320px', width: '100%' }}

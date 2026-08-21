@@ -10,7 +10,7 @@ import { UserAvatar } from '@/components/ui/user-avatar';
 import { useUserProfiles } from '@/lib/hooks/use-user-profiles';
 import type { NavigationPage } from '@/types';
 import {
-  MdHome, MdEuro, MdSettings, MdLightMode, MdDarkMode, MdLogout,
+  MdHome, MdSpaceDashboard, MdSettings, MdLightMode, MdDarkMode, MdLogout,
   MdExplore, MdTune, MdHouse, MdLuggage, MdAccountBalance, MdInsights, MdGroups, MdFlag,
   MdVisibility, MdVisibilityOff,
 } from 'react-icons/md';
@@ -33,8 +33,8 @@ export interface NavItem {
 export const navItems: NavItem[] = [
   { id: 'home', label: 'Home', icon: <MdHome size={20} />, href: '/', simpleModeVisible: true },
   { id: 'split', label: 'Split', icon: <MdGroups size={20} />, href: '/split', simpleModeVisible: true },
-  { id: 'overview', label: 'Overview', icon: <MdInsights size={20} />, href: '/overview' },
-  { id: 'cashflow', label: 'Cashflow', icon: <MdEuro size={20} />, href: '/cashflow', simpleModeVisible: true },
+  { id: 'overview', label: 'Overview', icon: <MdSpaceDashboard size={20} />, href: '/overview' },
+  { id: 'cashflow', label: 'Cashflow', icon: <MdInsights size={20} />, href: '/cashflow', simpleModeVisible: true },
   { id: 'mortgage', label: 'Mortgage', icon: <MdHouse size={20} />, href: '/mortgage' },
   { id: 'budgets', label: 'Trips & Budgets', icon: <MdLuggage size={20} />, href: '/budgets' },
   { id: 'goals', label: 'Goals', icon: <MdFlag size={20} />, href: '/goals', simpleModeVisible: true },
