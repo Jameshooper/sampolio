@@ -231,7 +231,8 @@ is double-counted. Split balances are *not* injected into the cashflow projectio
     emitted only at ≥2 of them), a mode-aware "This month, {X} leads instead" when the
     current month's top group/category/payer differs from the window's, and the net
     chart's "This month it moved up/down €X so far".
-  - Group cards **reorder via jiggle mode** (root `AGENTS.md` → "Motion"): a long-press
+  - Group cards **reorder via jiggle mode** (the Motion guidance in
+    [`architecture.md`](architecture.md#17-shared-ui-implementation-rules)): a long-press
     enters the mode, drag/drop or arrow keys reorder, and the flat id order persists to
     `UserPreferences.splitGroupOrder` (`updateSplitGroupOrder`, sanitized against the
     current group ids). The jiggle-reorder math is strictly one-dimensional (item
@@ -286,7 +287,7 @@ item (see "Bank-transaction linking" above); `?expense=&month=`
   burst, then a 450ms check draw), and a settle-up fires a ~1.5s canvas confetti
   burst, via `useCelebration()`
   (`src/components/providers/celebration-provider.tsx`) — two of the three sanctioned
-  exceptions to the ≤250ms motion rule (root `AGENTS.md` → "Motion"; the jiggle-mode
+  exceptions to the ≤250ms motion rule ([architecture.md](architecture.md#17-shared-ui-implementation-rules); the jiggle-mode
   wobble is the third). Under reduced motion `celebrate()` returns `false` and callers
   fall back to the flash-highlight row + toast.
 - **New since last visit**: `UserPreferences.splitLastSeenAt?: Record<groupId, ISO>`
@@ -873,7 +874,7 @@ own `AGENTS.md` in the same directory has the full breakdown. Summary:
   `executeCommand` `paths` map) and action commands `action-reconcile`,
   `action-add-income`, `action-add-expense`, `action-add-split-expense`, plus a dynamic
   `dynamic-add` entry. New pages must add both a `nav-config.tsx` entry and a palette
-  command (see root `AGENTS.md`, "Adding a New Page").
+  command (see root `AGENTS.md`, "Adding things").
 
 ## 8. Playground ("What If?", `/playground`)
 
@@ -976,27 +977,102 @@ current-vs-modified delta view on top, plus:
 
 ## 10. Demo mode (UI-only money masking)
 
-A privacy toggle for showing the app to friends without revealing real balances. When
-on, every monetary value rendered through `formatCurrency` (and its wrapper
-`formatCents`) becomes a fixed placeholder `€✱✱✱,✱✱` — chart *shapes* stay real (their
-bars/lines are unchanged), only the axis/label/tooltip **text** masks, because that text
-goes through `formatCurrency` too. Implementation lives in `src/lib/demo-mode.ts` and is
-covered in depth in root `AGENTS.md` → "Demo mode"; the feature-level summary:
+A device-local privacy toggle for showing the app to friends: when on, every monetary value
+rendered through `formatCurrency` (and its wrapper `formatCents`) is replaced by a fixed
+placeholder mask `€✱✱✱,✱✱` (U+2731 asterisks, U+2212 negatives) — chart *shapes* stay real,
+only their axis/label/tooltip text masks. Mechanism (`src/lib/demo-mode.ts`):
 
-- **Purpose & scope**: hides numbers on screen and in screenshots. `formatRate`, input
-  fields, and CSV/JSON exports are **not** masked.
-- **No exemptions**: every page masks, `/mortgage` and `/split` included.
-- **Per-device, not per-account**: the on/off state is `localStorage`
-  (`DEMO_MODE_STORAGE_KEY = 'demo-mode'`), never a `UserPreferences` field — it's about
-  the screen you're showing, not the user. A `storage` listener in `AppLayout` syncs the
-  toggle across the origin's open tabs/windows (e.g. the installed PWA window).
-- **Toggles**: the user-menu item (`nav-config.tsx`) and the command palette
-  (`action-demo-mode`). `AppLayout` shows a fixed "Demo" indicator pill (eye-off icon,
-  click to exit).
-- **How masking propagates** (so charts/tables stay correct across a toggle): the mask
-  flag lives on `globalThis` so every chunk reads one shared boolean; a chart's
-  ECharts-`option` `useMemo` must list `demoMasked` in its deps AND the ECharts element
-  remounts via `key={demoMasked ? 'masked' : 'plain'}`; long-lived PrimeReact widgets
-  that bake money into cells/templates (the money `DataTable`s, the cashflow header's
-  account-selector `Dropdown`) remount the same way. See the root doc for the full list
-  of call sites.
+- **A process-wide flag on `globalThis`, not React state.** `formatCurrency` is a pure formatter
+  called from hundreds of non-component call sites (chart option builders, table cell renderers,
+  CSV builders) that can't subscribe to context, so a single boolean
+  (`setDemoMask`/`isDemoMasked`) lets every formatter branch synchronously. The slot lives on
+  `globalThis` (not a module-scoped `let`) because production chunking may instantiate a shared
+  module once per chunk graph — a module-local flag set by AppLayout's copy could then disagree
+  with the copy a lazy chart chunk's tooltip formatter reads, leaving masked/unmasked values that
+  survive a toggle until a reload. `AppLayout` is the sole writer and syncs it **during render**
+  (before returning JSX) from `demoMode`, so the first paint after a toggle already formats
+  correctly. `demo-mode.ts` has **zero imports** so `constants.ts` can import it without a cycle.
+- **Persistence is per-device** localStorage (`DEMO_MODE_STORAGE_KEY = 'demo-mode'`), NOT a
+  `UserPreferences` field — it's about the screen you're showing, not the account. AppLayout also
+  listens for `storage` events, so toggling in one tab/window (e.g. the installed PWA) updates
+  every other open tab of the origin.
+- **No exempt pages**: every page masks, `/mortgage` and `/split` included.
+- **NOT masked**: `formatRate`, input fields, and CSV/JSON exports (only display formatting).
+- **Chart-memo dep + remount-key rule** (future code must follow): any ECharts `option` `useMemo`
+  that calls `formatCurrency` MUST list `demoMasked` (`useAppContext().demoMasked`) in its deps,
+  AND the `<ReactEChartsCore>` element carries `key={demoMasked ? 'masked' : 'plain'}` so a toggle
+  remounts the instance — a fresh option/instance is the only guarantee that no internally-cached
+  label or tooltip string survives the flip. Done for monthly-flow, cashflow-waterfall,
+  expense-treemap, scenario-comparison, split-spend, split-net, mortgage-sankey (Chart.js charts
+  rebuild options during render and their tooltip callbacks read the flag at hover time — no key
+  needed).
+- **Memoized-widget remount-key rule** (future code must follow): PrimeReact components with
+  memoized internals won't re-run `formatCurrency` on a bare re-render, so any long-lived widget
+  that bakes money into cells or templates remounts via `key={demoMasked ? 'masked' : 'plain'}` —
+  the money `DataTable`s (projection-table, bank-ledger-table, budget-expense-log, and
+  mortgage-ledger-table, whose composite key carries a demo segment) and the cashflow header's
+  account-selector `Dropdown` (money in its `valueTemplate`); modals mount fresh so they need no
+  key.
+- **Toggle surfaces**: the user-menu item (`nav-config.tsx`) and the command palette
+  (`action-demo-mode`); AppLayout renders a fixed "Demo" indicator pill (z-45, above mobile
+  chrome, below overlays — eye-off icon, click to exit). Context exposes
+  `demoMode`/`demoMasked`/`setDemoMode`.
+
+## 11. Simple vs Advanced display mode
+
+`UserPreferences.displayMode` (`'simple' | 'advanced'`) drives a per-user progressive-disclosure
+mode, read from `useAppContext().displayMode`. Conventions:
+
+- **Resolution**: `AppLayout` resolves an *unset* preference to **`simple` for users who have not
+  completed onboarding** and `advanced` for pre-existing accounts (`app-layout.tsx`). Onboarding's
+  Done step asks "How much detail do you want to see?" and persists the choice via `setDisplayMode`.
+- **Collapse, never remove**: simple mode hides complexity behind expanders ("See all balances",
+  "Show details") or falls back to the advanced UI — no feature becomes unreachable. Current scope:
+  Overview (Net Worth + Cash tiles only; plain-language KPI labels via `plainTerm`), Cashflow
+  ("Money in / Money out / Left over" banner with a sentiment sentence; charts + all-months table
+  behind "Show details"), Mortgage (`MyMortgageSummaryCard` personal card; per-loan cards and
+  advanced charts hidden), Settings (Data & Storage + Admin tabs hidden), and the reconcile wizard
+  (one-screen check-in: auto-starts on the current month, single "Save check-in" button).
+- **Nav slimming**: nav entries carry `simpleModeVisible` in `nav-config.tsx`; every surface renders
+  from `useVisibleNavItems()` (sidebar, drawer) or, for the bottom-nav, from
+  `resolveBottomNavIds()` — whose per-mode defaults `DEFAULT_BOTTOM_NAV_IDS` /
+  `DEFAULT_BOTTOM_NAV_IDS_SIMPLE` (`src/lib/bottom-nav-prefs.ts`) swap Overview for Goals in
+  Simple mode. Simple mode shows Home, Split, Cashflow, Goals, Settings; everything else
+  stays reachable from Home's feature grid (which deliberately lists **all** `navItems`) and the
+  command palette. A user's own bottom-nav pick (`UserPreferences.bottomNavIds`, chosen in
+  Settings → General → Mobile navigation) overrides the default in BOTH modes.
+- **Explain-the-number dialogs**: the Home glance tile and the Overview Net Worth KPI open
+  plain-words breakdowns (`home-dashboard.tsx` dialog, `net-worth-explain-dialog.tsx`) built from
+  data already on the page — display-only, in both modes.
+
+## 12. User avatars
+
+Optional per-user profile picture, shown wherever a person is displayed (split balance
+banner/detail, settle-up dropdowns, activity-feed actors, split list cards + summary rows, Home
+split widget, mortgage member cards + members dialog, admin users table + edit dialog, Settings →
+Account "Profile picture" block).
+
+- **Storage is a PLAIN, UNENCRYPTED binary** at `data/users/{id}/avatar.webp` (256×256 WebP) —
+  deliberate: it enables zero-decrypt streaming + HTTP caching, and an avatar is low-sensitivity.
+  It is **excluded from the JSON backup** (`data-transfer.ts` never touches it). `User.avatarVersion?: number`
+  is the only encrypted-record field; `setUserAvatar(userId, Buffer | null)` (`src/lib/db/users.ts`)
+  writes/removes the file and bumps the version.
+- **Served by `src/app/api/avatars/[userId]/route.ts`** (the SECOND non-NextAuth API route,
+  alongside the bank callback): session-gated, a `^[A-Za-z0-9-]+$` userId guard (blocks path
+  traversal), `Cache-Control: private, max-age=31536000, immutable`, and a `?v={avatarVersion}`
+  cache-buster from `avatarUrlFor`. Node runtime (needs `fs`). In `proxy.ts`, cookie-bearing requests are exempt
+  from rate limiting and this path is not auth-redirected.
+- **Read path**: `PublicUser.avatarUrl` is computed by `toPublicUser` / `avatarUrlFor`
+  (`db/users.ts`); `UserProfile { id, name, avatarUrl? }` is returned by `getUserProfiles`
+  (`src/lib/actions/user-profiles.ts`) to **any** authenticated user (no email/role leaked, so it
+  is safe for cross-user member displays). Client: `<UserAvatar>` (`src/components/ui/user-avatar.tsx`,
+  renders the image or initials on a deterministic `getAvatarColor` hsl hash from `avatar-utils.ts`),
+  the `useUserProfiles` hook (`src/lib/hooks/use-user-profiles.ts`, module cache + inflight dedup +
+  `invalidateUserProfiles`), and `AvatarEditorDialog` (drop/paste/browse → EXIF-normalized ≤2048px
+  source → `react-easy-crop` round crop + zoom [lazy-loaded dependency] → 256×256 WebP q0.85,
+  JPEG fallback).
+- **Write path**: `updateMyAvatar` (`actions/account.ts`, self); admin `updateUser` accepts an
+  `avatarDataUri` field (`avatarDataUriSchema` in `src/lib/schemas/user.schema.ts`).
+- **Cache invalidation is the `users` tag only** — the avatar is **never denormalized** into shared
+  split/mortgage docs (those carry names only), and is **not** in the session JWT (cookie size);
+  every avatar render resolves through the route + `useUserProfiles`.

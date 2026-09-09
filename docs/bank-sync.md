@@ -92,13 +92,13 @@ The mode is decided per link by `syncCursor.backfilledThrough`:
 | Strategy param | `longest` | `default` |
 | When | First sync after consent (runs inside the fresh-session window) and after a reconnect clears the cursor | Every subsequent sync |
 
-`strategy: 'longest'` fetches from the earliest available transaction without erroring on unavailable periods, so actual depth is ASPSP-dependent; 730 days is a floor request, not a guarantee. Raising `BACKFILL_DAYS` only affects future backfills — an already-backfilled link must be **reconnected** to deepen (section 5). Pagination follows `continuation_key` with a 50-page guard.
+`strategy: 'longest'` fetches from the earliest available transaction without erroring on unavailable periods, so actual depth is ASPSP-dependent; 730 days is a floor request, not a guarantee. Raising `BACKFILL_DAYS` only affects future backfills — an already-backfilled link must be **reconnected** to deepen (section 5). Both booked and pending fetches use `fetchAllAccountTransactions` (`src/lib/bank/transaction-pagination.ts`). It buffers a complete result set, passes `continuation_key` through unchanged, rejects repeated tokens, and permits at most 50 pages. Page 50 succeeds only if no continuation remains. Every page must be an object with a `transactions` array and an absent, null, or string continuation key; an empty string also ends pagination. Optional transaction fields retain the mapper's tolerant handling. Invalid envelopes, cycles, or truncation raise a redacted `BAD_RESPONSE` without tokens or response bodies. An incomplete booked fetch writes no transactions, advances no link cursor, and fans out no data; the account records a failure and uses the existing transient retry backoff.
 
 An incremental window is **stretched back to cover any stored pending row** (bounded by `PENDING_RECONCILE_LOOKBACK_DAYS` = **45 days**, sized above a card's ~30-day authorization hold) so a slow-settling pending is always re-fetched and reconciled — otherwise, with only a 3-day overlap, a pending that took longer to book would fall out of the window before its booked twin appeared and strand as a phantom. Pending reconciliation (pruning) happens in the dedup merge below.
 
 ### Pending (PDNG) fetch
 
-Banks return **booked-only** from the plain transactions endpoint, so each per-link sync runs a **second paginated fetch** over the same window with `transaction_status=PDNG` (`strategy: 'default'`), appended to the same incoming batch before the merge. Gating (`shouldFetchPending` in `sync.ts`, pure): attended runs (`psuIp` present — manual refresh, callback backfill) always fetch pending; unattended (scheduled) runs only on the link's **first sync of the UTC day**, keeping unattended transactions-endpoint calls at ≤4/day/account (3 scheduled booked + 1 PDNG) under the PSD2 Art. 36(5) allowance. The PDNG fetch is **fully non-fatal**: a failure logs a warning and sets `pendingFetchOk: false` in the audit; the run continues booked-only and — critically — passes **no prune window** to the merge (see Dedup). Per-account audit gains `pendingFetched` (row count) and `pendingFetchOk`; both absent when the gate skipped the fetch.
+Banks return **booked-only** from the plain transactions endpoint, so each per-link sync runs a **second paginated fetch** over the same window with `transaction_status=PDNG` (`strategy: 'default'`), buffered separately and appended to the incoming batch only after every pending page succeeds. Gating (`shouldFetchPending` in `sync.ts`, pure): attended runs (`psuIp` present — manual refresh, callback backfill) always fetch pending; unattended (scheduled) runs only on the link's **first sync of the UTC day**, keeping unattended transactions-endpoint calls at ≤4/day/account (3 scheduled booked + 1 PDNG) under the PSD2 Art. 36(5) allowance. The PDNG fetch is **fully non-fatal**: a failure (including a malformed page, repeated token, or page-limit truncation) discards the entire pending batch, logs a warning, and sets `pendingFetchOk: false` in the audit; the run continues booked-only and — critically — passes **no prune window** to the merge (see Dedup). Per-account audit gains `pendingFetched` (row count) and `pendingFetchOk`; both absent when the gate skipped the fetch. `pendingFetched` is set only for a complete fetch. A valid, complete empty result is authoritative and still prunes stale in-window holds. Shared-account fan-out receives the same complete batches and pruning decision.
 
 Per-bank reality (live probe, 2026-07-28): **Nordea** serves PDNG rows — stable `entry_reference` (kept on booking), `booking_date`/`value_date` null, `transaction_date` = the purchase date. **S-Pankki** serves no pending rows under any status (PDNG/HOLD/SCHD/OTHR, with or without date filters) even while its own app shows "Reserved amount" entries — nothing app-side can surface them.
 
@@ -244,12 +244,33 @@ The backfilled transaction history of cash/savings links also powers the cashflo
 
 ## 13. Troubleshooting
 
+For a bank outage or scheduled maintenance, check the ASPSP status page in the
+[Enable Banking control panel](https://enablebanking.com/docs/api/control-panel/#aspsp-status). Its reported-disruptions
+view separates ongoing, planned, and historical incidents; see the
+[platform update](https://enablebanking.com/blog/2026/09/09/changelog-august-2026).
+Sampolio uses the hosted REST API, so aggregation-core connector releases are
+provider-side updates, not an application SDK dependency to upgrade. The RSA
+application credential is distinct from the provider's bank-facing PSD2
+certificates; do not change JWT signing to follow core cryptographic enum changes.
+
+Provider mapping changes can still affect stored data. In particular, if a bank
+changes a **booked** transaction's `entry_reference`, refetching that history can
+add a second row: current dedup refreshes by key and only reconciles changed keys
+for pending-to-booked promotion. The [core changelog](https://enablebanking.com/docs/core/latest#0-16-7---2026-08-29)
+records reference changes for N26 and Landsbankinn. Assess affected-bank history
+before a manual repair; do not merge booked rows by amount/date alone or force a
+reconnect as a generic cure. No automatic historical-reference migration is
+performed. Account identification hash sets already support matching when an
+additional identification basis, such as an IBAN, appears.
+
 | Symptom | Cause | Fix / where to look |
 |---|---|---|
 | Settings shows "not configured", no Connect button works | One of the three `ENABLE_BANKING_*` env vars missing — `getBankConfig()` returns null | Set the env vars ([operations.md](operations.md)); scheduler logs `[bank-scheduler] Enable Banking not configured — scheduler idle` |
 | Syncs stopped; connection shows expired or revoked; Overview/Home banner | Consent past `consentExpiresAt`, bank returned `EXPIRED_SESSION`, or the session status read during the identity backfill was terminal (section 6) — `nextSyncDueAt` is cleared, scheduler skips it | User must **Reconnect**/"Renew consent" (`/bank` or Settings → Accounts & Banking); renewal keeps all links/config |
 | Consent granted for a shorter or longer period than expected | We request `min(bank max, 365d)` from `GET /aspsps` `maximum_consent_validity`, falling back to 180d when that lookup fails or the bank publishes none — and the bank may still grant less than asked | Compare "consent valid until" with the "· bank max Nd" note on the same line in Settings → Accounts & Banking; the granted `access.valid_until` is always authoritative. A stale cached ASPSP list clears after `ASPSP_INFO_CACHE_TTL_MS` (6h) or a restart |
 | "Just refreshed — please wait a few minutes" on Refresh now / `/bank`'s Refresh | `MIN_MANUAL_REFRESH_INTERVAL_MS` (5 min) since `lastSyncAt` not yet elapsed | Wait; the scheduled sync also runs every ~8h |
+| Sync run says `BAD_RESPONSE` during transaction fetching | Malformed JSON/envelope, repeated continuation token, or more than 50 pages needed | Stored transactions and the failed link's cursor remain unchanged; inspect provider status and response shape without logging tokens or financial data. Persistent page-limit failures need a separately designed windowed backfill, not a success marker on truncated data |
+| Audit shows `pendingFetchOk: false` while booked sync succeeds | Pending request failed or its page chain was incomplete | Expected nonfatal behavior: partial pending rows are discarded and existing holds are not pruned, including on shared accounts |
 | Sync run says `RATE_LIMITED` | ASPSP 429 / `ASPSP_RATE_LIMIT_EXCEEDED` | Automatic 6h backoff; scheduled budget is 3/day per **underlying account** (shared across users' links via `linkIdentityKey`); manual refreshes are attended and exempt |
 | Joint account synced by two users: one user's sync-run log shows `skippedFresh` / no new fetch | Cross-user fan-out — the other user's sync already fetched this cycle and wrote both copies (section 6) | Expected; data is current. A manual Refresh now always fetches |
 | Account connected but still shows its manual/starting balance | No sync has written a current-month `bank-sync` snapshot yet, or the link has no `linkedFinancialAccountId` | Set the linked account in Settings; run Refresh now; check the sync-run log |

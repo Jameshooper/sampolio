@@ -36,7 +36,6 @@ import { getLatestSnapshot, createBalanceSnapshot } from '@/lib/db/reconciliatio
 import { calculateProjection, getCurrentYearMonth } from '@/lib/projection';
 import {
   getAccountBalances,
-  getAccountTransactions,
   getSession,
   BankApiError,
   redactBankError,
@@ -45,7 +44,6 @@ import {
 } from './client';
 import {
   mapBalances,
-  mapTransactions,
   mapSessionDetails,
   terminalSessionStatus,
   type MappedBalance,
@@ -65,6 +63,7 @@ import {
   TRANSIENT_BACKOFF_MS,
   isBankSyncVerbose,
 } from './constants';
+import { fetchAllAccountTransactions } from './transaction-pagination';
 
 // ---------- per-connection in-process lock ----------
 const inFlight = new Map<string, Promise<BankSyncRun>>();
@@ -510,24 +509,20 @@ async function doRunSync(
       result.toDate = today;
 
       // --- transactions (paginated) ---
-      const incoming: BankTransaction[] = [];
-      let continuationKey: string | undefined;
-      let guard = 0;
-      do {
-        const raw = await getAccountTransactions(
-          link.accountUid,
-          {
-            dateFrom: fromDate,
-            dateTo: today,
-            continuationKey,
-            strategy: isBackfill ? 'longest' : 'default',
-          },
-          psu
-        );
-        const mapped = mapTransactions(raw, link.id, nowIso, () => uuidv4());
-        incoming.push(...mapped.transactions);
-        continuationKey = mapped.continuationKey;
-      } while (continuationKey && ++guard < 50);
+      // The helper buffers the entire chain, so a malformed/failed later page
+      // cannot leak a partial result into the ledger, cursor, or fan-out.
+      const incoming: BankTransaction[] = await fetchAllAccountTransactions(
+        link.accountUid,
+        {
+          dateFrom: fromDate,
+          dateTo: today,
+          strategy: isBackfill ? 'longest' : 'default',
+        },
+        psu,
+        link.id,
+        nowIso,
+        () => uuidv4()
+      );
 
       // --- pending (PDNG) transactions, separate request ---
       // Every ASPSP returns booked rows only unless `transaction_status` is sent,
@@ -536,27 +531,21 @@ async function doRunSync(
       let pendingFetchOk = false;
       if (shouldFetchPending(!!opts.psuIp, current.lastSyncedAt, today)) {
         try {
-          let pendingCount = 0;
-          let pendingKey: string | undefined;
-          let pendingGuard = 0;
-          do {
-            const rawPending = await getAccountTransactions(
-              link.accountUid,
-              {
-                dateFrom: fromDate,
-                dateTo: today,
-                continuationKey: pendingKey,
-                strategy: 'default',
-                transactionStatus: 'PDNG',
-              },
-              psu
-            );
-            const mapped = mapTransactions(rawPending, link.id, nowIso, () => uuidv4());
-            incoming.push(...mapped.transactions);
-            pendingCount += mapped.transactions.length;
-            pendingKey = mapped.continuationKey;
-          } while (pendingKey && ++pendingGuard < 50);
-          result.pendingFetched = pendingCount;
+          const pending = await fetchAllAccountTransactions(
+            link.accountUid,
+            {
+              dateFrom: fromDate,
+              dateTo: today,
+              strategy: 'default',
+              transactionStatus: 'PDNG',
+            },
+            psu,
+            link.id,
+            nowIso,
+            () => uuidv4()
+          );
+          incoming.push(...pending);
+          result.pendingFetched = pending.length;
           pendingFetchOk = true;
         } catch (err) {
           console.warn(

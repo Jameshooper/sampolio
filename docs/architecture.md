@@ -78,7 +78,7 @@ runbook: [`operations.md`](operations.md).
   bypassed. Independently, **every server action verifies `auth()`** — data is guarded
   regardless of either layer. The group also has a `template.tsx` that re-mounts per
   navigation and wraps children in `PageEntrance` (250ms `rise-in`, restarted on pathname
-  change — see root `AGENTS.md` → "Motion"); `/` wraps itself the same way in
+  change — see §17 Motion); `/` wraps itself the same way in
   `home-dashboard.tsx`.
 
 ## 4. Request flow
@@ -298,7 +298,8 @@ Installable PWA: `src/app/manifest.ts` (static manifest, `display: standalone`, 
 requests; **network-first** for navigations with `public/offline.html` fallback;
 **cache-first** for hashed `/_next/static/*`; **stale-while-revalidate** for `/themes/*` and
 `/icons/*`; everything else uncached. `CACHE_VERSION` (currently `'v7'`) must be bumped on
-any deploy that changes cached assets. Responsive/PWA UI rules: root `AGENTS.md`.
+any deploy that changes cached assets. Responsive/PWA UI rules: root `AGENTS.md`
+and [`src/components/AGENTS.md`](../src/components/AGENTS.md).
 
 ## 13. Frontend structure
 
@@ -402,3 +403,156 @@ liquid-glass override layer is loaded after the theme by `theme-provider.tsx`).
 
 Lint: flat config `eslint.config.mjs` = `eslint-config-next/core-web-vitals` +
 `eslint-config-next/typescript`, ignoring `.next/`, `.next-prod/`, `out/`, `build/`.
+
+## 17. Shared UI implementation rules
+
+The component inventory is in [`src/components/AGENTS.md`](../src/components/AGENTS.md).
+This section owns cross-cutting UI behavior; display-mode and money-masking details
+live in [`features.md`](features.md#10-demo-mode-ui-only-money-masking).
+
+### Feedback & loading UX (perceived performance)
+
+Every mutation should confirm; every load should feel instant. The primitives:
+
+- **Global toast** — one `<Toast>` is mounted by `ToastProvider` (`src/components/providers/toast-provider.tsx`, wrapping the app in `AppLayout`). Use `useToast()` → `success/error/info/show`; **do not** mount per-component `<Toast>` refs. Fire a toast after every create/update/delete/settle/import so the user knows it worked.
+- **Global confirm dialog** — likewise, exactly ONE `<ConfirmDialog />` receiver is mounted in `AppLayout`; components call PrimeReact's imperative `confirmDialog({...})` and **never mount their own `<ConfirmDialog />`** — every mounted receiver answers every `confirmDialog()` call, so a second receiver produces a stacked duplicate that stays open after accept/reject.
+- **Delayed loading** — `useDelayedFlag(active, 300)` (`src/lib/hooks/use-delayed-flag.ts`) reveals a flag only after `active` holds for ~300ms and drops it instantly when false, so fast ops (the norm after the HKDF encryption fix) never flash a spinner. `DelayedSpinner` / `DelayedSkeleton` (`src/components/ui/delayed-loading.tsx`) build on it.
+- **Instant shell + skeletons** — heavy pages render their chrome immediately and show a content-shaped, delayed skeleton for the data region instead of a full-page `ProgressSpinner`. Reusable layouts in `src/components/ui/skeletons.tsx` (`KpiGridSkeleton`, `ChartsPageSkeleton`, `ListPageSkeleton`, `HomeSkeleton` — Home's glance/balances/activity region, `SplitDetailSkeleton`). Skeletons must match the real content's position AND height — a skeleton taller than what it replaces makes content jump on load. Pages fetch with a first-load-only `loaded` flag: refetches update silently and never re-show the skeleton; register the AppContext refresh callback in a **separate** effect from the fetch effect (goals/page.tsx is the reference pattern).
+- **Optimistic UI** — on daily-driver hot paths (e.g. split-expense delete, recurring pause/resume in `split/[id]/page.tsx`), apply the change to local state immediately + toast + reconcile with a background refresh; on failure, roll back the snapshot and toast the error. Server actions/schemas are unchanged.
+- **Chart code-splitting** — heavy charts are lazy via `next/dynamic({ ssr: false, loading })`: the ECharts trio on cashflow (`monthly-flow`/`cashflow-waterfall`/`expense-treemap`) and the seven mortgage charts (one shared chunk). The **modal router is lazy too**: `entity-modal-router.tsx` (mounted by `AppLayout` on every page) `next/dynamic`s `CashflowItemModal`, `EntityListDrawer`, `UsersModal`, and `QuickAddSplitModal`, so none of them ship in the shared first-load bundle. Keeps each page's initial JS small.
+- **Shared UI primitives** (`src/components/ui/`) — use `AlertBanner` for reminder/attention banners, `KpiTile` for KPI cards (zero-delta change badges are suppressed automatically; optional `help` prop renders a plain-language hint), `HelpHint` for tap-friendly "?" explanations, and `EmptyState` for empty lists; never hand-roll these per page.
+- **Chart explanations** (`src/components/ui/chart-explain.tsx` + pure engine `src/lib/chart-descriptions.ts`, unit-tested) — EVERY canvas chart gets an "Explain" button opening an inline `.collapse-grid` panel with (a) canned "How to read this chart" cue rows (`ChartCueSwatch` color/shape swatches matching the real palette) and (b) a generated "in plain words" description built from the chart's own data (money ALWAYS via `formatCurrency` with `demoMasked` in the describe `useMemo` deps; sentences ≤ ~15 words; proportions via `shareToWords`). An sr-only copy is always rendered and wired via `aria-describedby`. The panel defaults OPEN in Simple display mode (words first). The three cashflow charts additionally have step tours (`useChartTour` + `ChartTourBar`, ECharts `dispatchAction` highlights). New charts must integrate via the `ChartExplain` wrapper and add a describe function + test to `chart-descriptions.ts` — never ship a bare canvas chart.
+- **Plain language** — `src/lib/plain-language.ts` is the single jargon→everyday-wording map (`plainTerm(key, isSimple)` picks the wording per display mode, `helpText(key)` feeds `HelpHint` tooltips). One concept, one name app-wide (e.g. reconciliation is always "monthly check-in" in UI copy; Euribor banners lead with "mortgage interest rate"). Add new finance terms to the map, never inline in a component.
+- **Category colors** — `CATEGORY_COLORS` + `getCategoryColor(category)` in `src/lib/constants.ts` is the single category→color map (warm = discretionary, cool = fixed/income; covers cashflow ITEM_CATEGORIES **and** the SPLIT_CATEGORIES names) used by the expense treemap, the cashflow Sankey, category badges, the split spend chart's By-category mode, the split group-detail category treemap, and the plan-check card's dots. Never assign category colors positionally.
+- **Category auto-suggest** — `guessItemCategory(name)` (`src/lib/category-utils.ts`, pure/tested) prefills the cashflow item form's category from the name (the split quick-add has its own `guessCategory` for split categories), and also recategorizes bank merchant names (incl. common Finnish chains) for the Overview plan-check card. Suggestions re-evaluate while auto-set and stop once the user picks manually.
+
+### Motion (animations, transitions, press feedback)
+
+Motion is feedback, never choreography: 120–250ms, opacity/transform only, CSS-first (no
+motion library), and it must never gate input. The primitives:
+
+- **Tokens** — durations `--motion-fast` (120ms, press), `--motion-base` (180ms, hovers/fades),
+  `--motion-slow` (250ms, entrances/expanders) on `:root` in `src/app/globals.css`; easings
+  `--ease-fluid` (entrances) / `--ease-snap` (press/settle) in its `@theme` (→ Tailwind
+  `ease-fluid`/`ease-snap` utilities). Never hardcode new durations/curves — consume the tokens
+  (CSS files use `var(--motion-*)`; note `public/themes/glass-overrides.css` changes require a
+  `CACHE_VERSION` bump in `public/sw.js`).
+- **Entrance utilities** — `animate-fade-in` (180ms opacity), `animate-rise-in` (250ms opacity +
+  8px rise), `animate-scale-in` (160ms; command palette). They're *mount* animations with the
+  default `none` fill — NEVER add `forwards`/`both`: a filled entrance keeps the element
+  permanently promoted (own stacking context/composited layer), which breaks `backdrop-filter`
+  on glass headers above it (content stays crisp instead of blurring). Apply to a wrapper that
+  mounts once (skeleton→content swap, conditional-render reveals like "Show archived");
+  refetches must not remount the wrapper. Caution: they animate `transform`, so never put one on
+  an element that positions itself with `-translate-*` utilities (wrap it instead — see the
+  command palette's inner/outer split).
+- **Page entrance** — `PageEntrance` (`src/components/ui/page-entrance.tsx`) wraps page content
+  in `rise-in` and imperatively RESTARTS it on pathname change; a bare `animate-rise-in` on a
+  route wrapper never plays because Next 16 pre-mounts prefetched routes hidden (the animation
+  clock is spent before reveal; layout effects fire at reveal, hence the restart). Used by
+  `src/app/(dashboard)/template.tsx` and Home (`home-dashboard.tsx`, outside the group).
+- **Press/hover** — `.pressable` (globals.css, un-layered so it wins on PrimeReact Cards) gives
+  card-sized clickable surfaces transition + `:active` scale(0.98), plus a centralized guarded
+  hover box-shadow lift (`@media (hover: hover) and (pointer: fine)`, box-shadow only — never
+  transform, so it can't fight Tailwind `hover:scale-*` utilities like KpiTile's) — per-element
+  `hover:shadow-md` is now optional/redundant on `.pressable` surfaces. Text/list rows get
+  `transition-colors` + an `active:bg-*` tint instead — never transform. PrimeReact buttons/inputs/
+  menu rows are covered globally in `glass-overrides.css` (buttons get `:enabled:active`
+  scale(0.97)); when adding a `transition` there, MERGE with the theme's property list on the
+  theme's own selector — a later shorthand replaces it wholesale, and a lower-specificity selector
+  silently never applies. Ripple stays off. Tailwind's `hover:` is already touch-safe; hand-written
+  CSS `:hover` must sit in `@media (hover: hover) and (pointer: fine)`.
+- **Cursor** — Tailwind v4's preflight no longer sets `cursor: pointer` on `<button>` (v3 did), and
+  the PrimeReact theme CSS never set it on `.p-button`/`.p-menuitem-link`. Restored globally:
+  `globals.css` covers native `button`/`[role="button"]`, `glass-overrides.css` covers
+  `.p-button:enabled`/`.p-menuitem-link`.
+- **Reduced motion** — one global kill-switch at the end of globals.css (0.01ms durations, covers
+  PrimeReact too). Never add per-component `prefers-reduced-motion` blocks; JS-driven motion bails
+  out via `useReducedMotion()` (`src/lib/hooks/use-reduced-motion.ts`).
+- **Expanders** — `.collapse-grid`/`.is-open` (globals.css) animates auto-height for
+  always-mounted content (add `inert` when closed); conditionally-rendered or heavy reveals use
+  `animate-fade-in` instead.
+- **Jiggle-mode reorder** — the shared iOS-style reorder primitive
+  (`src/components/ui/jiggle-reorder.tsx`: `useJiggleReorder` hook + `JiggleModeBar` bottom pill;
+  pure math in `src/lib/reorder-utils.ts`). A long-press (~500ms) enters a persistent "jiggle
+  mode": every item wobbles and any item can be dragged to a new slot (FLIP-style sibling shifts
+  on the motion tokens); Escape/Done (or the bar) exits. Keyboard + sr-only entry buttons make it
+  a11y-complete. The wobble (`jiggle-wobble`, ±1deg infinite) lives on the inner
+  `[data-jiggle-inner]` element while the drag translate lives on the outer `[data-jiggle-item]`,
+  so the two transforms never collide. Non-passive native `touchmove` `preventDefault` keeps the
+  drag from scrolling the page. Used by **/split** (group list → `UserPreferences.splitGroupOrder`),
+  **/bank** (one shared mode across two rows — connection tabs + accounts within the active
+  connection → `bankAccountOrder`), and **Settings → General → Mobile navigation**
+  (`mobile-nav-card.tsx` bottom-nav tab preview → `bottomNavIds`). Skipped entirely under reduced motion (the hook bails via
+  `useReducedMotion()` and the CSS wobble is killed).
+- **Celebrations** — `useCelebration().celebrate('checkmark' | 'confetti')`
+  (`src/components/providers/celebration-provider.tsx`, mounted inside `ToastProvider` in
+  `app-layout.tsx`): a ~1.5s checkmark badge-pop on split-expense create (an expanding ring
+  ripple + a 6-dot burst, then a 450ms check draw; overlay unmounts at ~1550ms) and a ~1.5s
+  hand-rolled canvas confetti burst on settle-up. Classes `celebrate-container`/`-ring`/`-badge`/
+  `-dot`/`-check`, keyframes `celebrate-pop`/`-draw`/`-ring`/`-dot` in globals.css — every
+  animation in that block uses the `forwards` fill (the whole overlay unmounts, so there is no
+  lingering-composited-layer concern the entrance utilities have; a no-fill pop reverted to its
+  start frame before unmount and flickered). Both render `z-[2000] pointer-events-none` (never
+  gate input). The checkmark pop, the confetti burst, and the jiggle-mode wobble above (infinite,
+  transform-only, dead under reduced motion) are the THREE sanctioned exceptions to the ≤250ms
+  rule — no further exceptions without amending this list. Gated by `useReducedMotion()` — reduced
+  ⇒ `celebrate()` returns `false` and callers fall back to the flash-highlight row + toast.
+- **Do NOT**: `transition: all`, animating height/width/filter/backdrop-filter, effects >250ms
+  (except the three sanctioned exceptions above), count-up on money values, exit animations on
+  optimistic deletes or overlay close, list stagger, press effects on inputs. The bottom-nav active pill (`bottom-nav.tsx`) is the one sanctioned
+  positional animation (N+1 equal user-chosen cells, `left` calc from `100 / cells`); its `<nav>` must stay `fixed` **without**
+  `relative` (fixed already anchors the absolute pill; `relative` would win the cascade and
+  un-fix the bar). Don't touch `.progressbar-instant` or `flash-highlight`. In CSS comments,
+  never write a star-followed-by-slash glob (e.g. spell `--motion-{fast,base,slow}`) — it closes
+  the comment and the parser eats the next rule.
+
+### Responsive & PWA (mobile + desktop)
+
+**Every new page, component, and interface MUST be responsive** — it has to look and work well on a phone (~375px wide) *and* on desktop, with no horizontal overflow. This is a hard requirement, not a nice-to-have. Always check both a mobile (~390px) and a desktop (~1280px) breakpoint before considering UI work done (use any available browser/UI automation with a resized viewport — assert `document.documentElement.scrollWidth <= window.innerWidth`). The app is also an **installable PWA** (Add to Home Screen on iOS/Android/desktop).
+
+- **Breakpoint switch — Tailwind `lg` (1024px)**: below `lg` = mobile chrome, at/above `lg` = the desktop sidebar layout. **Drive visibility with CSS** (`lg:hidden` / `hidden lg:block`) to stay hydration-safe and avoid flashes; only use the SSR-safe `useIsMobile()` / `useMediaQuery()` hook (`src/lib/hooks/use-media-query.ts`) when logic must branch (which component to mount, a numeric prop, `maximized={isMobile}`).
+- **Navigation chrome**: desktop uses the fixed collapsible `SidebarNav` (`hidden lg:flex`); mobile uses `MobileTopBar` (hamburger + brand + search; the monthly check-in deliberately lives on Overview, not in the chrome), `BottomNav` (1–4 user-chosen tabs + a fixed "More"; see `src/lib/bottom-nav-prefs.ts`), and `MobileNavDrawer` (PrimeReact `Sidebar`, the full menu). All four nav surfaces read the **shared `src/components/layout/nav-config.tsx`** (`navItems`, `isNavItemActive`, `useUserMenuItems`) — add a nav entry there, never in one surface only. The sidebar/drawer user button renders the user's `UserAvatar` (not a generic icon), and the user-menu's avatar+name+email header item navigates to `/settings?tab=account` — the Settings page maps a `?tab=` slug to the index of its *rendered* tabs (Simple mode hides some), unknown slug ⇒ first tab. `<main>` uses `lg:ml-16`/`lg:ml-64` (no base margin) + top/bottom padding for the mobile bars, all with `env(safe-area-inset-*)` so the iPhone notch / home indicator are respected (root `viewport` sets `viewport-fit=cover`). Mobile chrome (`MobileTopBar`, `BottomNav`) is `z-40`; the desktop `SidebarNav` and PrimeReact/command-palette overlays sit at `z-50`+.
+- **Dialogs**: a global mobile cap in `globals.css` (`@media (max-width:640px)` → `.p-dialog { width:95vw; max-width:95vw; max-height:calc(92vh − safe-area insets) }` + scrollable content) fixes **every** PrimeReact `Dialog` at once — you normally don't need per-dialog responsive props. For genuinely huge wizards, `maximized={isMobile}` is an option (the 95vw cap turns "maximized" into a tall centered box; the inset-aware `max-height` keeps its header clear of the dynamic island in the installed PWA).
+- **Overlay safe-area insets (installed PWA)**: portalled overlays render at the viewport edges (`viewport-fit=cover`), so `globals.css` pads them for `env(safe-area-inset-*)`. Off-canvas drawers (PrimeReact `Sidebar`) get top/bottom/side padding so the header clears the island and the footer clears the home indicator — **the position class lives on the `.p-sidebar-mask`, the panel is its child**, so target `.p-sidebar-mask.p-sidebar-left > .p-sidebar` (not `.p-sidebar.p-sidebar-left`, which matches nothing). Top-anchored `Toast`s drop below the island. Sticky in-page headers must pin **below** the mobile top bar (`sticky top-[calc(3.5rem+env(safe-area-inset-top))] lg:top-[env(safe-area-inset-top)]`), never `top-0` — the `lg:` offset matters because a **desktop-breakpoint installed PWA (iPad)** also runs edge-to-edge under the OS status bar with no mobile top bar to clear it. For the same reason `<main>` keeps `lg:pt-[env(safe-area-inset-top)]`/`lg:pb-[env(safe-area-inset-bottom)]` (not `lg:pt-0`), the desktop `SidebarNav` aside pads itself with both insets, and `AppLayout` paints a fixed `hidden lg:block` glass strip of height `env(safe-area-inset-top)` under the status bar so scrolled content never shows through it (all of these are 0 in a normal desktop browser).
+- **Tables (mixed strategy)**: lighter tables (e.g. cashflow projection, bank ledger) render a `lg:hidden` card/list view beside a `hidden lg:block` DataTable; the wide mortgage ledger keeps a single DataTable with a **frozen first column** (`frozen alignFrozen="left"` + `scrollable`) for horizontal scroll. Don't let a raw wide table overflow the viewport.
+- **Charts**: containers must be width-fluid (`width:100%`) with responsive heights (e.g. `h-72 lg:h-96`); Chart.js charts set `maintainAspectRatio:false` and fill the wrapper (don't also pass a fixed `height` prop — they fight). ECharts/Sankey resize to the container; pass a shorter mobile height where it helps.
+- **Toolbars / page headers**: stack on mobile (`flex-col sm:flex-row`), full-width controls (`w-full sm:w-auto` / `flex-1 sm:flex-none`). Full-bleed sticky bars that use negative margins must match the responsive content padding (`-mx-2 px-2 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6`). Keep tap targets ≥44px. `TabView`s with many tabs use `scrollable`.
+
+PWA manifest, service-worker caching, and registration details live in §12.
+
+### Forms
+
+New and migrated forms use **React Hook Form + Zod** (`@hookform/resolvers/zod`):
+```typescript
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { someSchema, type SomeFormData } from '@/lib/schemas/some.schema';
+
+const { control, handleSubmit, formState: { errors } } = useForm<SomeFormData>({
+  resolver: zodResolver(someSchema),
+  defaultValues: { ... },
+});
+```
+- Zod schemas live in `src/lib/schemas/`
+- PrimeReact inputs require `Controller` wrapper (they use value/onChange, not ref-based)
+- Legacy forms may still use raw `useState` — migrate when touching them
+
+### Dates, IDs, and salary calculations
+
+Use `date-fns` for dates, `YYYY-MM` (`YearMonth`) for month values, `uuid.v4`
+for entity IDs, and Finnish `fi-FI` display formatting. Use `calculateNetSalary`
+from `src/lib/salary-utils.ts` rather than inline salary math. Taxed income uses
+`calculateTaxedIncomeNet` from `src/lib/taxed-income-utils.ts`: salary taxes gross
+plus taxable benefits; taxed income taxes raw gross. The DB freezes the taxed
+net amount at write time, and the modal uses the same formula for its preview.
+
+### Adding an entity
+
+1. **Define types** in `src/types/index.ts` (entity + create/update request types)
+2. **Create DB file** in `src/lib/db/` following the existing pattern (CRUD + file I/O)
+3. **Add cached queries** in `src/lib/db/cached.ts`
+4. **Create server actions** in `src/lib/actions/` with Zod validation and cache tags
+5. **Create Zod schema** in `src/lib/schemas/` for form validation
+6. **Add UI components** (modal form, list display) following existing patterns
+7. **Update projection engine** if the entity affects financial projections

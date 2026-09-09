@@ -3,7 +3,7 @@
 The mortgage is one of Sampolio's two shared, multi-user entities (the other is the split
 group). This document covers its data model, the amortization engine, actuals/reconcile,
 ownership math, and its integration points. Conventions (server-action pattern, cache
-tags, encrypted-file storage) live in the root `AGENTS.md`; anchoring and transfer
+tags, encrypted-file storage) live in the root `AGENTS.md` and [`src/lib/db/AGENTS.md`](../src/lib/db/AGENTS.md); anchoring and transfer
 injection into cashflow are detailed in
 [projections-and-reconciliation.md](projections-and-reconciliation.md); the overall
 storage/crypto picture is in [architecture.md](architecture.md).

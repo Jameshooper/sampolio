@@ -64,8 +64,15 @@ next-env.d.ts
 # still picks them up.
 *.local.test.ts
 
-# Single-machine operator runbooks and working notes: absolute paths, the prod
-# hostname, and personal context that has no value to a reader of this repo.
-/.claude/skills/
+# Shared skills live in .agents/skills; only their Claude aliases are tracked here.
+/.claude/skills/*
+!/.claude/skills/deploy-prod/
+!/.claude/skills/verify-documentation/
+/.claude/skills/deploy-prod/*
+/.claude/skills/verify-documentation/*
+!/.claude/skills/deploy-prod/SKILL.md
+!/.claude/skills/verify-documentation/SKILL.md
+
+# Machine-local permissions and working notes
 /.claude/settings.local.json
 /plans/

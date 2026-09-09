@@ -2,7 +2,7 @@
 
 How Sampolio computes every number: the three projection engines, the reconciliation
 (anchoring) system that keeps them honest, and everything that feeds them. This is the
-deep companion to the summaries in the root `AGENTS.md` and the per-page `AGENTS.md`
+deep reference linked from the root `AGENTS.md` and the per-page `AGENTS.md`
 files. Related docs: [bank-sync.md](bank-sync.md) (where synced balances/transactions
 come from), [mortgage.md](mortgage.md) (the mortgage amortization engine whose output is
 injected here), [features.md](features.md) (budgets/split, whose outputs also fold in),
