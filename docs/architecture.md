@@ -9,23 +9,28 @@ mechanics live in [`features.md`](features.md), [`projections-and-reconciliation
 
 | Layer | Package | Version (package.json) |
 |---|---|---|
-| Framework | `next` | 16.2.7 (App Router, `cacheComponents: true`) |
-| UI runtime | `react` / `react-dom` | 19.2.7 |
+| Framework | `next` | 16.3.4 (App Router, `cacheComponents: true`) |
+| UI runtime | `react` / `react-dom` | 19.2.8 |
 | Language | `typescript` | ^6.0.3 (strict) |
-| Components | `primereact` | ^10.9.8 (+ `primeicons` ^7.0.0, `react-icons` ^5.7.0, `lucide-react` ^1.23.0) |
-| Styling | `tailwindcss` | ^4.3.0 (via `@tailwindcss/postcss`) |
-| Auth | `next-auth` | 5.0.0-beta.31 (+ `bcryptjs` ^3.0.3 for password hashing) |
-| Validation | `zod` | ^4.4.3 |
-| Forms | `react-hook-form` ^7.81.0 + `@hookform/resolvers` ^5.4.0 |
+| Components | `primereact` | ^10.9.9 (+ `primeicons` ^7.0.0, `react-icons` ^5.7.0, `lucide-react` 1.42.0) |
+| Styling | `tailwindcss` | ^4.3.3 (via `@tailwindcss/postcss`) |
+| Auth | `next-auth` | 5.0.0-beta.32 (+ `bcryptjs` ^3.0.3 for password hashing) |
+| Validation | `zod` | ^4.5.4 |
+| Forms | `react-hook-form` ^7.87.0 + `@hookform/resolvers` ^5.9.1 |
 | Charts | `echarts` ^6.1.0 (+ `echarts-for-react` ^3.0.6), `chart.js` ^4.5.1 |
-| Avatar crop | `react-easy-crop` | ^6.2.2 (lazy-loaded in the avatar editor) |
+| Avatar crop | `react-easy-crop` | ^6.2.3 (lazy-loaded in the avatar editor) |
 | Dates | `date-fns` | ^4.4.0 |
-| JWT (bank API) | `jose` | ^6.2.3 (RS256 for Enable Banking) |
-| IDs | `uuid` | ^14.0.1 |
-| Tests | `vitest` ^4.1.10, `@testing-library/react` ^16.3.2, `jsdom` ^29.1.1 |
+| JWT (bank API) | `jose` | ^6.2.12 (RS256 for Enable Banking) |
+| IDs | `uuid` | ^14.0.2 |
+| Tests | `vitest` ^5.0.0, `@testing-library/react` ^16.3.3, `jsdom` ^30.0.1 |
 
-Package manager: **pnpm 11.5.1** (`packageManager` field). Node: **>= 26** (`engines`; `.nvmrc` = `v26`).
+Package manager: **pnpm 12.3.4** (`packageManager` field). Node: **>= 26** (`engines`; `.nvmrc` = `v26`).
 There is no external database and no ORM — persistence is encrypted JSON files on disk.
+
+Compatibility bounds: PrimeReact 10 preserves the resource-based themes used by
+`scripts/copy-themes.mjs`; PrimeIcons 7 retains its MIT license. ESLint 9 and
+TypeScript 6 remain within the lint plugins' supported peer ranges. Lucide is
+pinned to 1.42.0 to satisfy pnpm's minimum release-age policy.
 
 ## 2. Runtime topology
 
