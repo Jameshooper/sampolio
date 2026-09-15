@@ -267,3 +267,10 @@ add this repo's URL). Full install steps and the option reference are in
 - This is unrelated to `HA_WEBHOOK_URL` (§9), which is Sampolio *sending*
   Split activity notifications to Home Assistant, not Home Assistant running
   Sampolio.
+- The Dockerfile sets `DISABLE_TLS_HEADERS=true`, which makes `next.config.ts`
+  drop `Strict-Transport-Security` and the CSP's `upgrade-insecure-requests`.
+  Both assume a TLS-terminating proxy in front (true for §1–§11's launchd +
+  Caddy, never true for this plain-http container) — left on, the browser
+  rewrites every asset request to a nonexistent https listener and the page
+  never renders (blank white screen, no server-side error). Only the Docker
+  build sets this; the non-Docker deploy path is unaffected.

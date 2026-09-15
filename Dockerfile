@@ -16,6 +16,14 @@ WORKDIR /app
 # package.json's packageManager field directly.
 RUN npm i -g pnpm@12.3.4
 
+# This image has no TLS of its own (next start serves plain http) — tell
+# next.config.ts to drop Strict-Transport-Security/upgrade-insecure-requests,
+# which otherwise make the browser rewrite every asset request to a
+# nonexistent https listener and blank the page. Set before the build in
+# case headers() bakes this in at build time, and again in the runner stage
+# in case it's read at next start's boot instead — cheap either way.
+ENV DISABLE_TLS_HEADERS=true
+
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm build
@@ -32,6 +40,7 @@ RUN pnpm prune --prod && pnpm store prune
 FROM node:26-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ENV DISABLE_TLS_HEADERS=true
 
 COPY --from=builder /app ./
 COPY run.sh /run.sh

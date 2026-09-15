@@ -1,5 +1,17 @@
 import type { NextConfig } from "next";
 
+// Strict-Transport-Security and the CSP's upgrade-insecure-requests both tell
+// the browser "this origin is TLS — rewrite every request to https://". That
+// holds for the maintainer's own deployment (Caddy terminates TLS in front),
+// but not for the Docker image (Dockerfile), which next start serves as
+// plain http with no TLS of its own — including the Home Assistant add-on's
+// direct-port setup. Forcing an https upgrade there makes every asset
+// request 404 against a nonexistent TLS listener, silently blanking the
+// page. The Dockerfile sets DISABLE_TLS_HEADERS=true so this build drops
+// both; the non-Docker deploy path (server-deploy.sh/launchd) never sets it,
+// so production is unaffected.
+const forceHttps = process.env.DISABLE_TLS_HEADERS !== 'true';
+
 const securityHeaders = [
   // Prevent clickjacking
   {
@@ -26,11 +38,12 @@ const securityHeaders = [
     key: 'Permissions-Policy',
     value: 'camera=(), microphone=(), geolocation=(), browsing-topics=()',
   },
-  // Force HTTPS (should be set by proxy, but also set here as fallback)
-  {
+  // Force HTTPS (should be set by proxy, but also set here as fallback) —
+  // only when this build actually sits behind TLS. See forceHttps above.
+  ...(forceHttps ? [{
     key: 'Strict-Transport-Security',
     value: 'max-age=31536000; includeSubDomains',
-  },
+  }] : []),
   // Content Security Policy
   {
     key: 'Content-Security-Policy',
@@ -45,7 +58,7 @@ const securityHeaders = [
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
-      "upgrade-insecure-requests",
+      ...(forceHttps ? ["upgrade-insecure-requests"] : []),
     ].join('; '),
   },
 ];
