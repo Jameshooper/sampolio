@@ -1,0 +1,34 @@
+name: Sampolio
+version: "3.16.0"
+slug: sampolio
+description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
+url: https://github.com/jameshooper/sampolio
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+ports:
+  3999/tcp: 3999
+ports_description:
+  3999/tcp: Sampolio web UI
+map:
+  - type: data
+    read_only: false
+webui: http://[HOST]:[PORT:3999]/
+options:
+  auth_secret: ""
+  encryption_key: ""
+  auth_url: ""
+  enable_banking_app_id: ""
+  enable_banking_redirect_url: ""
+  enable_banking_private_key: ""
+  ha_webhook_url: ""
+schema:
+  auth_secret: password
+  encryption_key: password
+  auth_url: url
+  enable_banking_app_id: str?
+  enable_banking_redirect_url: url?
+  enable_banking_private_key: password?
+  ha_webhook_url: url?

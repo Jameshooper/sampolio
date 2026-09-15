@@ -41,7 +41,8 @@ Read the nearest nested `AGENTS.md` for `src/app/**`, `src/components`,
 - [`docs/features.md`](docs/features.md): Split, Budgets, Goals, Trips,
   dashboards, onboarding, and command palette.
 - [`docs/operations.md`](docs/operations.md): launchd/Caddy, deploy, backups,
-  encryption maintenance, environment, and production-copy workflow.
+  encryption maintenance, environment, production-copy workflow, and the
+  Home Assistant add-on (`Dockerfile`/`config.yaml`, §12).
 - [`docs/bank-sync.md`](docs/bank-sync.md): all Enable Banking details.
 - [`docs/known-gaps.md`](docs/known-gaps.md) and
   [`docs/improvements.md`](docs/improvements.md): verified gaps and backlog.

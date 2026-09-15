@@ -238,3 +238,32 @@ key, the Cloudflare account/app/IdP IDs, the tunnel UUID, the Zero Trust team
 domain, and the allow-listed personal emails. Real values live in `~/sampolio/.env`,
 `~/.sampolio/`, and the Cloudflare dashboard. The daily backup script and its
 launchd plist also live outside the repo.
+
+## 12. Home Assistant add-on (alternative deployment)
+
+The maintainer's own instance still runs exactly as described in §1–§11
+(launchd + Caddy + Cloudflare Tunnel, no Docker). Independently of that, the
+repo root also carries `Dockerfile`, `run.sh`, `config.yaml`, and
+`repository.yaml` so the same app can be installed as a Home Assistant
+Supervisor add-on (Settings → Add-ons → Add-on Store → ⋮ → Repositories →
+add this repo's URL). Full install steps and the option reference are in
+[`DOCS.md`](../DOCS.md); the short version:
+
+- `run.sh` is the container entrypoint. When `/data/options.json` exists
+  (Supervisor's convention for add-on options) it reads `auth_secret`,
+  `encryption_key`, `auth_url`, the three `enable_banking_*` options, and
+  `ha_webhook_url` from it and maps them onto the same env vars listed in §9;
+  otherwise it reads those as plain env vars, so the same image also runs as
+  a bare `docker run` (see the README's Docker Deployment section). Missing
+  `auth_secret` / `encryption_key` / `auth_url` is a hard failure at
+  container startup, matching the no-Docker path's behavior in §8.
+- The add-on's persistent `/data` volume holds the app's encrypted data tree
+  at `/data/sampolio` (`DATA_DIR`), plus the Enable Banking PEM (written from
+  the `enable_banking_private_key` option) when bank sync is configured.
+- The add-on exposes a direct port (`3999/tcp`, remappable), not Ingress —
+  Sampolio's `X-Frame-Options: DENY` / `frame-ancestors 'none'` headers
+  (`next.config.ts`) are unchanged, so "Open Web UI" opens a new tab rather
+  than embedding the app in the Home Assistant frontend.
+- This is unrelated to `HA_WEBHOOK_URL` (§9), which is Sampolio *sending*
+  Split activity notifications to Home Assistant, not Home Assistant running
+  Sampolio.

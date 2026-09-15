@@ -436,44 +436,38 @@ open http://localhost:3999
 
 ### Docker Deployment
 
-Create a `Dockerfile`:
+The repo root includes a real `Dockerfile` (multi-stage: `pnpm install` +
+`pnpm build`, then `next start` via `run.sh`) and `.dockerignore`. It builds
+the app the same way [`scripts/server-deploy.sh`](scripts/server-deploy.sh)
+does — no `output: 'standalone'`, see the comment in `next.config.ts`.
 
-```dockerfile
-# Use the Node version pinned in .nvmrc (26)
-FROM node:26-alpine AS builder
-WORKDIR /app
-# Node 25+ no longer bundles corepack — install pnpm directly
-RUN npm i -g pnpm
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-COPY . .
-RUN pnpm build
-
-FROM node:26-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-ENV DATA_DIR=/app/data
-# Copy the built app together with its node_modules and run via `next start`
-COPY --from=builder /app ./
-
-EXPOSE 3999
-CMD ["node", "node_modules/next/dist/bin/next", "start", "-p", "3999", "-H", "0.0.0.0"]
-```
-
-Build and run:
 ```bash
 docker build -t sampolio .
 
 # Option 1: Using .env file (recommended)
-docker run -p 3999:3999 -v $(pwd)/data:/app/data --env-file .env sampolio
+docker run -p 3999:3999 -v $(pwd)/data:/data/sampolio --env-file .env sampolio
 
 # Option 2: Explicit environment variables
 docker run -p 3999:3999 \
-  -v $(pwd)/data:/app/data \
+  -v $(pwd)/data:/data/sampolio \
   -e AUTH_SECRET=your-secret \
   -e ENCRYPTION_KEY=your-key \
+  -e AUTH_URL=http://localhost:3999 \
   sampolio
 ```
+
+`run.sh` also reads options from `/data/options.json` when present (Home
+Assistant Supervisor's convention) so the same image doubles as the Home
+Assistant add-on below — see that section for the option names.
+
+### Home Assistant Add-on
+
+This repository is also directly installable as a Home Assistant Supervisor
+add-on: `config.yaml` and `repository.yaml` at the repo root describe it, and
+it builds from the same `Dockerfile` above. In Home Assistant: **Settings →
+Add-ons → Add-on Store → ⋮ → Repositories**, add this repo's URL, then
+install **Sampolio** from the store. Full option reference, data/backup
+notes, and the Ingress/framing caveat are in [`DOCS.md`](DOCS.md).
 
 ## Environment Variables
 
