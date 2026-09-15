@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.16.0"
+version: "3.16.1"
 slug: sampolio
 description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -29,6 +29,10 @@ schema:
   encryption_key: password
   auth_url: url
   enable_banking_app_id: str?
-  enable_banking_redirect_url: url?
+  # str?, not url? — these default to "" and HA's url validator rejects an
+  # empty string even on an optional field, since "" isn't a valid URL. The
+  # app (src/lib/bank/*, src/lib/split-notify.ts) already treats a
+  # missing/blank value as "feature disabled" on its own.
+  enable_banking_redirect_url: str?
   enable_banking_private_key: password?
-  ha_webhook_url: url?
+  ha_webhook_url: str?
