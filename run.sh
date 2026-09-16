@@ -10,7 +10,9 @@
 # `docker run` deployment.
 set -eu
 
-OPTIONS_FILE="/data/options.json"
+# Overridable only so the test suite (src/test/run-sh.test.ts) can point this
+# at a fixture; Supervisor always mounts the real file at the default path.
+OPTIONS_FILE="${OPTIONS_FILE:-/data/options.json}"
 
 get_option() {
   node -e '
@@ -55,8 +57,12 @@ mkdir -p "$DATA_DIR"
 if [ -n "${ENABLE_BANKING_APP_ID:-}" ] && [ -n "${ENABLE_BANKING_REDIRECT_URL:-}" ] && [ -n "${ENABLE_BANKING_PRIVATE_KEY:-}" ]; then
   export ENABLE_BANKING_APP_ID
   export ENABLE_BANKING_REDIRECT_URL
-  KEY_FILE="/data/enable_banking_private_key.pem"
-  printf '%s' "$ENABLE_BANKING_PRIVATE_KEY" > "$KEY_FILE"
+  # Under $DATA_DIR, not bare /data, for the same reason as the data tree
+  # above: /data's top level belongs to Supervisor-managed files.
+  KEY_FILE="$DATA_DIR/enable_banking_private_key.pem"
+  # Trailing newline: the value arrives via command substitution above, which
+  # strips trailing newlines, and a PEM should end with one.
+  printf '%s\n' "$ENABLE_BANKING_PRIVATE_KEY" > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
   export ENABLE_BANKING_PRIVATE_KEY_FILE="$KEY_FILE"
 fi
@@ -86,20 +92,27 @@ NEXT_INTERNAL_PORT="${NEXT_INTERNAL_PORT:-3998}"
 # only what `tailscale serve`/`funnel` explicitly publishes is reachable.
 # It also means no TUN device and no NET_ADMIN are needed at all (see
 # config.yaml, which requests neither).
+#
+# The state/socket paths below are overridable for the same reason as
+# OPTIONS_FILE — so src/test/run-sh.test.ts can run this block against stubs
+# without needing /data and /var/run. In the container they are the defaults.
+TAILSCALE_STATE_DIR="${TAILSCALE_STATE_DIR:-/data/tailscale}"
+TAILSCALE_SOCKET="${TAILSCALE_SOCKET:-/var/run/tailscale/tailscaled.sock}"
+
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
-  mkdir -p /data/tailscale /var/run/tailscale
+  mkdir -p "$TAILSCALE_STATE_DIR" "$(dirname "$TAILSCALE_SOCKET")"
   tailscaled \
     --tun=userspace-networking \
-    --state=/data/tailscale/tailscaled.state \
-    --socket=/var/run/tailscale/tailscaled.sock \
-    >/data/tailscale/tailscaled.log 2>&1 &
+    --state="$TAILSCALE_STATE_DIR/tailscaled.state" \
+    --socket="$TAILSCALE_SOCKET" \
+    >"$TAILSCALE_STATE_DIR/tailscaled.log" 2>&1 &
 
   for i in $(seq 1 30); do
-    [ -S /var/run/tailscale/tailscaled.sock ] && break
+    [ -S "$TAILSCALE_SOCKET" ] && break
     sleep 1
   done
 
-  tailscale --socket=/var/run/tailscale/tailscaled.sock up \
+  tailscale --socket="$TAILSCALE_SOCKET" up \
     --authkey="$TAILSCALE_AUTHKEY" \
     --hostname=sampolio-callback \
     --accept-dns=false
@@ -113,9 +126,9 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
   # proxy passes non-ingress requests straight through unmodified, so this
   # behaves identically to hitting Next.js itself.
   if [ "${TAILSCALE_FUNNEL:-}" = "true" ]; then
-    tailscale --socket=/var/run/tailscale/tailscaled.sock serve --bg \
+    tailscale --socket="$TAILSCALE_SOCKET" serve --bg \
       --set-path=/api/bank/callback "http://127.0.0.1:$PORT/api/bank/callback"
-    tailscale --socket=/var/run/tailscale/tailscaled.sock funnel --bg 443 on
+    tailscale --socket="$TAILSCALE_SOCKET" funnel --bg 443 on
   fi
 fi
 

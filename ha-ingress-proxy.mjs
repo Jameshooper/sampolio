@@ -35,6 +35,12 @@ const REWRITABLE_TYPES = [
   'application/manifest+json',
   'application/javascript',
   'text/javascript',
+  // React Server Components' flight payload, served on every client-side
+  // navigation (a <Link> click, router.push). Its own root-absolute link and
+  // chunk references need the same treatment as the initial HTML document's —
+  // without it only the first page load works and every navigation after it
+  // resolves against the Home Assistant origin root instead of the add-on.
+  'text/x-component',
 ];
 
 // Plain HTML: href="/foo", src="/foo", action="/foo" — never "//foo", which
@@ -48,11 +54,78 @@ const ATTR_ESCAPED_RE = /\\"(href|src|action)\\":\\"(\/(?!\/)[^"\\]*)\\"/g;
 // embedded in HTML/JS.
 const JSON_RE = /"(href|src|action|start_url)":"(\/(?!\/)[^"]*)"/g;
 
-function rewriteBody(body, prefix) {
-  let out = body.replace(ATTR_RE, (_m, attr, path) => `${attr}="${prefix}${path}"`);
-  out = out.replace(JSON_RE, (_m, attr, path) => `"${attr}":"${prefix}${path}"`);
-  out = out.replace(ATTR_ESCAPED_RE, (_m, attr, path) => `\\"${attr}\\":\\"${prefix}${path}\\"`);
+// A path that already carries the prefix must be left alone. Responses are
+// rewritten once each, so this is not about repeated passes: the app itself
+// can emit an already-prefixed path, because after hydration the client's
+// props hold rewritten values and it echoes them back (a callbackUrl taken
+// from the current location, a redirect built from a referring path). Adding
+// the prefix a second time produces a dead URL that 404s.
+const alreadyPrefixed = (path, prefix) =>
+  path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`);
+
+export function rewriteBody(body, prefix) {
+  const apply = (path) => (alreadyPrefixed(path, prefix) ? path : `${prefix}${path}`);
+  let out = body.replace(ATTR_RE, (_m, attr, path) => `${attr}="${apply(path)}"`);
+  out = out.replace(JSON_RE, (_m, attr, path) => `"${attr}":"${apply(path)}"`);
+  out = out.replace(ATTR_ESCAPED_RE, (_m, attr, path) => `\\"${attr}\\":\\"${apply(path)}\\"`);
   return out;
+}
+
+// A redirect target can reach us in three shapes, and only the first two
+// belong to this app: a root-absolute path ("/auth/signin"), an absolute URL
+// on this same host (NextAuth builds these for sign-out), and an external URL
+// (the bank's consent page) which must never be touched.
+//
+// The query string needs the same care as the path. src/proxy.ts sends
+// unauthenticated visitors to /auth/signin?callbackUrl=<path>, and the sign-in
+// page hands that value straight to router.push() — a client-side navigation,
+// which resolves against the origin root, not the ingress mount. Left alone it
+// takes the user out of the add-on the moment they successfully sign in.
+const CALLBACK_PARAM_RE = /([?&]callbackUrl=)([^&]*)/g;
+
+function prefixCallbackParam(search, prefix) {
+  return search.replace(CALLBACK_PARAM_RE, (whole, lead, value) => {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(value);
+    } catch {
+      return whole; // malformed percent-encoding — leave it exactly as sent
+    }
+    if (!decoded.startsWith('/') || decoded.startsWith('//')) return whole;
+    if (alreadyPrefixed(decoded, prefix)) return whole;
+    return `${lead}${encodeURIComponent(prefix + decoded)}`;
+  });
+}
+
+function prefixPathAndQuery(pathWithQuery, prefix) {
+  const q = pathWithQuery.indexOf('?');
+  const path = q === -1 ? pathWithQuery : pathWithQuery.slice(0, q);
+  const search = q === -1 ? '' : prefixCallbackParam(pathWithQuery.slice(q), prefix);
+  return (alreadyPrefixed(path, prefix) ? path : `${prefix}${path}`) + search;
+}
+
+export function rewriteLocation(location, prefix, host) {
+  if (!location || !prefix) return location;
+
+  // Absolute or protocol-relative: rewrite only if it points back at us.
+  if (location.startsWith('//') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(location)) {
+    if (!host) return location;
+    let url;
+    try {
+      url = new URL(location, `http://${host}`);
+    } catch {
+      return location;
+    }
+    if (url.host !== host) return location; // another host entirely — hands off
+    return `${url.protocol}//${url.host}${prefixPathAndQuery(url.pathname + url.search, prefix)}${url.hash}`;
+  }
+
+  if (!location.startsWith('/')) return location; // relative — already correct
+  return prefixPathAndQuery(location, prefix);
+}
+
+export function isRewritableType(contentType) {
+  return REWRITABLE_TYPES.some((t) => (contentType || '').includes(t));
 }
 
 export function waitForPort(port, host = '127.0.0.1') {
@@ -71,13 +144,13 @@ export function waitForPort(port, host = '127.0.0.1') {
 // would only poison their own response, but validating is nearly free.
 const INGRESS_PATH_RE = /^\/[A-Za-z0-9._~\-/]*$/;
 
-function ingressPrefixOf(req) {
+export function ingressPrefixOf(req) {
   const raw = req.headers['x-ingress-path'];
   if (typeof raw !== 'string' || raw.length > 256) return undefined;
   return INGRESS_PATH_RE.test(raw) ? raw : undefined;
 }
 
-function startServer() {
+export function createProxyServer({ upstreamPort = UPSTREAM_PORT } = {}) {
   const server = http.createServer((req, res) => {
     const ingressPrefix = ingressPrefixOf(req);
 
@@ -101,15 +174,16 @@ function startServer() {
     }
 
     const upstreamReq = http.request(
-      { hostname: '127.0.0.1', port: UPSTREAM_PORT, path: req.url, method: req.method, headers },
+      { hostname: '127.0.0.1', port: upstreamPort, path: req.url, method: req.method, headers },
       (upstreamRes) => {
         const contentType = upstreamRes.headers['content-type'] || '';
         const location = upstreamRes.headers.location;
-        const rewriteLocation = Boolean(ingressPrefix) && Boolean(location) && location.startsWith('/') && !location.startsWith('//');
         const rewriteBodyContent = Boolean(ingressPrefix) && REWRITABLE_TYPES.some((t) => contentType.includes(t));
 
         const outHeaders = { ...upstreamRes.headers };
-        if (rewriteLocation) outHeaders.location = `${ingressPrefix}${location}`;
+        if (ingressPrefix && location) {
+          outHeaders.location = rewriteLocation(location, ingressPrefix, req.headers.host);
+        }
 
         if (!rewriteBodyContent) {
           res.writeHead(upstreamRes.statusCode, outHeaders);
@@ -137,9 +211,19 @@ function startServer() {
     req.pipe(upstreamReq);
   });
 
+  return server;
+}
+
+export function startServer() {
+  const server = createProxyServer();
   server.listen(LISTEN_PORT, '0.0.0.0', () => {
     console.log(`[ingress-proxy] listening on ${LISTEN_PORT} -> 127.0.0.1:${UPSTREAM_PORT}`);
   });
+  return server;
 }
 
-startServer();
+// Only bind a port when run as the entrypoint (run.sh execs this file).
+// Importing it — as the test suite does — must have no side effects.
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  startServer();
+}

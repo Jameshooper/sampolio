@@ -281,11 +281,27 @@ add this repo's URL). Full install steps and the option reference are in
   fixes this: it sits in front of Next.js (which `run.sh` moves to an
   internal-only port, `NEXT_INTERNAL_PORT`) and rewrites those root-absolute
   references — HTML attributes, the same escaped inside React Server
-  Components' streamed `<script>` payload, plain JSON in
+  Components' streamed `<script>` payload, the `text/x-component` flight
+  payload served on every client-side navigation, plain JSON in
   `manifest.webmanifest`, and redirect `Location` headers — using the
   current request's `X-Ingress-Path` header, which Supervisor sends fresh on
   every request. Requests with no `X-Ingress-Path` (direct access, or the
   Tailscale Funnel bank-callback path) pass through completely unmodified.
+- `Location` rewriting covers three shapes: a root-absolute path, an
+  absolute URL **on the same host** (NextAuth builds these), and an external
+  URL, which is never touched — the bank's PSD2 consent redirect depends on
+  that. It also prefixes the `callbackUrl` query parameter that `proxy.ts`
+  attaches when sending an unauthenticated visitor to `/auth/signin`: the
+  sign-in page hands that value to `router.push()`, a client-side navigation
+  resolved against the origin root, so an un-prefixed value drops the user
+  out of the add-on the moment they sign in successfully. A path that
+  already carries the prefix is left alone.
+- `src/test/ha-ingress-proxy.test.ts`, `src/test/run-sh.test.ts`, and
+  `src/test/addon-manifest.test.ts` cover this runtime; the proxy exports its
+  rewriting helpers and `createProxyServer()` for that reason and only binds
+  a port when executed directly. `run.sh` reads `OPTIONS_FILE`,
+  `TAILSCALE_STATE_DIR`, and `TAILSCALE_SOCKET` from the environment purely
+  so those tests can redirect them; the defaults are the container paths.
 - This is unrelated to `HA_WEBHOOK_URL` (§9), which is Sampolio *sending*
   Split activity notifications to Home Assistant, not Home Assistant running
   Sampolio.

@@ -349,7 +349,7 @@ Entity IDs are `uuid` v4 strings.
 
 Vitest (`vitest.config` + `src/test/setup.ts` with jest-dom + jsdom stubs for
 localStorage/matchMedia; mock factories in `src/test/mocks.ts`; `src/test/render.tsx`
-wraps components in ThemeProvider). ~50 test files:
+wraps components in ThemeProvider). ~69 test files:
 
 - **Pure engines** (`src/lib/*.test.ts`): `projection`, `wealth-projection`,
   `mortgage-projection` (exact-match reference-spreadsheet reproduction), `mortgage-utils`,
@@ -381,6 +381,14 @@ wraps components in ThemeProvider). ~50 test files:
   (`alert-banner`, `kpi-tile`, `empty-state`) plus the highest-state components —
   the cashflow item modal, the split editor, and the reconcile wizard (server
   actions mocked with `vi.mock`)
+- **Home Assistant add-on runtime** (`src/test/*.test.ts`, covering repo-root
+  files the app itself never imports): `ha-ingress-proxy` (path/Location
+  rewriting, `X-Ingress-Path` validation, and integration cases against a real
+  loopback upstream), `run-sh` (options.json → environment mapping, required-secret
+  refusal, PEM write, Tailscale invocation — the real script run against PATH
+  stubs for `tailscale`/`tailscaled` and node's long-running children), and
+  `addon-manifest` (`config.yaml` ↔ `package.json` ↔ `run.sh` consistency, plus
+  the Ingress-only and no-privileges posture)
 
 **No coverage exists for**: most pages, server actions (auth/validation/cache-tag
 behavior — except a representative goals/trips/user-preferences slice), the bank client/connect/sync
