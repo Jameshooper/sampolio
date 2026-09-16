@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.17.1"
+version: "3.18.0"
 slug: sampolio
 description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -8,14 +8,19 @@ arch:
   - aarch64
 startup: application
 boot: auto
-ports:
-  3999/tcp: 3999
-ports_description:
-  3999/tcp: Sampolio web UI
+# Ingress-only: no direct port. Reachable exclusively through an
+# authenticated Home Assistant session (Supervisor proxies the iframe), plus
+# the separately-scoped Tailscale Funnel path for the bank callback (run.sh)
+# — see docs/operations.md §12. If you need a direct LAN/Tailscale-Services
+# port again, that reopens the bypass around HA's own login/2FA this exists
+# to close; add `ports`/`ports_description`/`webui` back deliberately.
+ingress: true
+ingress_port: 3999
+ingress_panel: true
+panel_icon: mdi:cash-multiple
 map:
   - type: data
     read_only: false
-webui: http://[HOST]:[PORT:3999]/
 # NET_ADMIN/NET_RAW + /dev/net/tun are only used by the optional embedded
 # Tailscale in run.sh (tailscale_auth_key option) — absent that option, they
 # grant tailscaled nothing to do. Deliberately narrower than a full Tailscale

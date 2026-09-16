@@ -260,10 +260,16 @@ add this repo's URL). Full install steps and the option reference are in
 - The add-on's persistent `/data` volume holds the app's encrypted data tree
   at `/data/sampolio` (`DATA_DIR`), plus the Enable Banking PEM (written from
   the `enable_banking_private_key` option) when bank sync is configured.
-- The add-on exposes a direct port (`3999/tcp`, remappable), not Ingress —
-  Sampolio's `X-Frame-Options: DENY` / `frame-ancestors 'none'` headers
-  (`next.config.ts`) are unchanged, so "Open Web UI" opens a new tab rather
-  than embedding the app in the Home Assistant frontend.
+- The add-on is **Ingress-only** (`ingress: true`, no `ports`/`webui`) — only
+  reachable through an authenticated Home Assistant session, which is the
+  point: it's a real login/2FA gate the add-on otherwise has none of. That
+  requires letting Supervisor frame it, so the Dockerfile sets
+  `ALLOW_IFRAME_EMBED=true`, which drops `X-Frame-Options: DENY` /
+  `frame-ancestors 'none'` (`next.config.ts`) for this build only — safe
+  specifically because there's no other browsable path left once Ingress is
+  the only port. Reintroducing a direct port or a standalone Tailscale
+  add-on's `svc:sampolio` Service alongside Ingress reopens a bypass around
+  HA's login and defeats the point of using Ingress at all.
 - This is unrelated to `HA_WEBHOOK_URL` (§9), which is Sampolio *sending*
   Split activity notifications to Home Assistant, not Home Assistant running
   Sampolio.

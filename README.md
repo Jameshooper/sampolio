@@ -466,8 +466,11 @@ This repository is also directly installable as a Home Assistant Supervisor
 add-on: `config.yaml` and `repository.yaml` at the repo root describe it, and
 it builds from the same `Dockerfile` above. In Home Assistant: **Settings →
 Add-ons → Add-on Store → ⋮ → Repositories**, add this repo's URL, then
-install **Sampolio** from the store. Full option reference, data/backup
-notes, and the Ingress/framing caveat are in [`DOCS.md`](DOCS.md).
+install **Sampolio** from the store. It's Ingress-only (no direct port) —
+reachable only through an authenticated Home Assistant session. Full option
+reference, the Ingress/framing tradeoff, and an optional embedded-Tailscale
+path for Enable Banking's public callback requirement are in
+[`DOCS.md`](DOCS.md).
 
 ## Environment Variables
 

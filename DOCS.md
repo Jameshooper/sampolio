@@ -21,7 +21,9 @@ installs of the same app.
    take a few minutes.
 3. Open the **Configuration** tab and fill in the required options (below)
    before starting.
-4. Start the add-on, then use **Open Web UI** (or `http://<your-ha-host>:3999`).
+4. Start the add-on, then use **Open Web UI**, or the sidebar panel it adds —
+   this is an **Ingress** add-on with no direct port, so it's only reachable
+   through an authenticated Home Assistant session. See "Access" below.
 
 ## Configuration options
 
@@ -29,7 +31,7 @@ installs of the same app.
 |---|---|---|
 | `auth_secret` | **Yes** | NextAuth session secret. Generate with `openssl rand -base64 32`. |
 | `encryption_key` | **Yes** | AES-256-GCM master key for the encrypted data files. Generate with `openssl rand -hex 32`. **Never change this once data exists** — existing accounts become unreadable. |
-| `auth_url` | **Yes** | The public URL you'll reach Sampolio at, e.g. `http://homeassistant.local:3999` or your own reverse-proxy URL. Used by NextAuth for redirects. |
+| `auth_url` | **Yes** | A syntactically valid `https://` URL for NextAuth's own internal use. Since this add-on is Ingress-only (no fixed public hostname — Ingress can be reached via a LAN IP, `homeassistant.local`, a Tailscale hostname, or Nabu Casa's cloud domain depending on how you're connected), it doesn't need to exactly match whatever URL you're actually browsing through; `AUTH_TRUST_HOST=true` (set by `run.sh`) plus this app's own use of relative redirects makes that unnecessary. Any stable placeholder like `https://sampolio.local` works. |
 | `enable_banking_app_id` | No | Enable Banking (PSD2 AIS) application id. Leave all three `enable_banking_*` options blank to keep bank sync fully disabled (zero network calls) — see [`docs/bank-sync.md`](docs/bank-sync.md). |
 | `enable_banking_redirect_url` | No | Must be `<auth_url>/api/bank/callback` and publicly reachable if bank sync is enabled. |
 | `enable_banking_private_key` | No | The RS256 PKCS#8 PEM contents (not a file path) for the Enable Banking application. Written to `/data/enable_banking_private_key.pem` inside the add-on's persistent storage at startup. |
@@ -86,14 +88,31 @@ persistent storage volume, which Home Assistant keeps across add-on updates
 and restarts. Include this add-on's data in your normal Home Assistant
 **Settings → System → Backups** snapshots to back it up.
 
-## Ports
+## Access
 
-The add-on listens on `3999/tcp` by default; remap it from the add-on's
-**Network** tab like any other add-on. It is a direct port (not Ingress), so
-opening the web UI takes you to Sampolio in a new browser tab rather than
-embedding it in the Home Assistant frontend — Sampolio's security headers
-deny being framed (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), which
-this add-on does not change.
+This add-on has **no direct port** — `config.yaml` sets `ingress: true` with
+no `ports`/`webui`, so the only way in day to day is through an
+**authenticated Home Assistant session**: Supervisor proxies Sampolio inside
+an iframe in the HA frontend (from the add-on page's "Open Web UI", or the
+sidebar panel it adds). Whatever login method protects your Home Assistant
+instance — including 2FA, if you have it configured — protects Sampolio the
+same way, since nothing reaches it without first authenticating to HA.
+
+To make that iframe embedding possible at all, this build sets
+`ALLOW_IFRAME_EMBED=true` (Dockerfile), which drops `X-Frame-Options: DENY`
+and the CSP's `frame-ancestors 'none'` — see the comment above `allowFraming`
+in `next.config.ts` for why that's only a safe tradeoff *because* there's no
+other browsable path left (no direct port, no plain-Tailscale-Services
+access) where an unrelated page framing Sampolio could matter.
+
+**This only holds if it stays the only way in.** If you also keep a
+standalone Tailscale add-on's `svc:sampolio` Service (or re-add a direct
+port), that path bypasses HA's login/2FA entirely — Ingress isn't a security
+boundary you also have, it's the boundary, so anything parallel to it
+undermines the point of using it. The one deliberate exception is the
+scoped Tailscale Funnel path (`tailscale_funnel`), which exposes only
+`/api/bank/callback` — not a browsable page, and unrelated to this iframe
+concern.
 
 ## Updating
 

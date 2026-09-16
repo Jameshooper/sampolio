@@ -12,12 +12,26 @@ import type { NextConfig } from "next";
 // so production is unaffected.
 const forceHttps = process.env.DISABLE_TLS_HEADERS !== 'true';
 
+// X-Frame-Options: DENY and the CSP's frame-ancestors 'none' block ANY
+// framing — including Home Assistant's own Ingress, which embeds the add-on
+// in an iframe inside the HA frontend. There's no static allowlist that
+// works here: the HA frontend's own origin varies by how the browser reaches
+// it (LAN IP, homeassistant.local, a Tailscale hostname, Nabu Casa's cloud
+// domain), so frame-ancestors can't name it in advance. ALLOW_IFRAME_EMBED
+// is set only by an add-on build with ingress: true in config.yaml, and only
+// alongside dropping the add-on's own direct port — Ingress access is
+// already gated by an authenticated HA session before Supervisor proxies the
+// request through, so the framing check becomes redundant for that path,
+// and there's no other browsable path left where it would have mattered.
+const allowFraming = process.env.ALLOW_IFRAME_EMBED === 'true';
+
 const securityHeaders = [
-  // Prevent clickjacking
-  {
+  // Prevent clickjacking — omitted when embedding is deliberately allowed
+  // (Home Assistant Ingress). See allowFraming above.
+  ...(allowFraming ? [] : [{
     key: 'X-Frame-Options',
     value: 'DENY',
-  },
+  }]),
   // Prevent MIME type sniffing
   {
     key: 'X-Content-Type-Options',
@@ -55,7 +69,7 @@ const securityHeaders = [
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "connect-src 'self'",
-      "frame-ancestors 'none'",
+      ...(allowFraming ? [] : ["frame-ancestors 'none'"]),
       "base-uri 'self'",
       "form-action 'self'",
       ...(forceHttps ? ["upgrade-insecure-requests"] : []),
