@@ -63,14 +63,42 @@ export function waitForPort(port, host = '127.0.0.1') {
   });
 }
 
+// Supervisor's own ingress prefix is always a plain absolute path. Anything
+// else is either malformed or a client trying to steer what we splice into
+// response bodies and Location headers — an unvalidated value containing a
+// quote would break out of the href="…" we build. Only requests that reach
+// this port directly (another add-on container) can attempt it, and they
+// would only poison their own response, but validating is nearly free.
+const INGRESS_PATH_RE = /^\/[A-Za-z0-9._~\-/]*$/;
+
+function ingressPrefixOf(req) {
+  const raw = req.headers['x-ingress-path'];
+  if (typeof raw !== 'string' || raw.length > 256) return undefined;
+  return INGRESS_PATH_RE.test(raw) ? raw : undefined;
+}
+
 function startServer() {
   const server = http.createServer((req, res) => {
-    const ingressPrefix = req.headers['x-ingress-path'];
+    const ingressPrefix = ingressPrefixOf(req);
 
     const headers = { ...req.headers };
     // Force plain-text upstream responses so string rewriting never has to
     // touch gzip — this is a loopback hop, compression cost is irrelevant.
     delete headers['accept-encoding'];
+    // src/proxy.ts derives its rate-limit key from X-Forwarded-For's first
+    // entry, so a caller that can set that header freely can reset its own
+    // auth-attempt budget at will. Requests arriving through Ingress carry
+    // Supervisor's own forwarding headers and a valid ingress prefix — keep
+    // those, they hold the real client IP. Anything else reached this port
+    // outside Ingress (the Funnel-published callback path, or another
+    // container on the add-on network) and does not get to name its own IP.
+    if (!ingressPrefix) {
+      delete headers['x-forwarded-host'];
+      delete headers['x-forwarded-proto'];
+      const peer = req.socket.remoteAddress;
+      if (peer) headers['x-forwarded-for'] = peer;
+      else delete headers['x-forwarded-for'];
+    }
 
     const upstreamReq = http.request(
       { hostname: '127.0.0.1', port: UPSTREAM_PORT, path: req.url, method: req.method, headers },

@@ -264,12 +264,13 @@ add this repo's URL). Full install steps and the option reference are in
   reachable through an authenticated Home Assistant session, which is the
   point: it's a real login/2FA gate the add-on otherwise has none of. That
   requires letting Supervisor frame it, so the Dockerfile sets
-  `ALLOW_IFRAME_EMBED=true`, which drops `X-Frame-Options: DENY` /
-  `frame-ancestors 'none'` (`next.config.ts`) for this build only — safe
-  specifically because there's no other browsable path left once Ingress is
-  the only port. Reintroducing a direct port or a standalone Tailscale
-  add-on's `svc:sampolio` Service alongside Ingress reopens a bypass around
-  HA's login and defeats the point of using Ingress at all.
+  `ALLOW_IFRAME_EMBED=true` (`next.config.ts`). Ingress serves the add-on
+  from the HA frontend's own origin, so that **relaxes** `frame-ancestors`
+  from `'none'` to `'self'` and drops only `X-Frame-Options`, which cannot
+  express "same origin only" — third-party framing stays blocked.
+  Reintroducing a direct port or a standalone Tailscale add-on's
+  `svc:sampolio` Service alongside Ingress reopens a bypass around HA's
+  login and defeats the point of using Ingress at all.
 - Ingress mounts the app at a path containing a token that **rotates every
   add-on restart** (`/api/hassio_ingress/<token>/`), which a static Next.js
   `basePath` can't track. Next.js/React also emit root-absolute asset and
@@ -299,9 +300,14 @@ add this repo's URL). Full install steps and the option reference are in
   This exists for cases with no reverse proxy/tunnel at all, where a PSD2
   consent redirect (Enable Banking) needs a genuinely public callback URL; a
   tailnet-only Tailscale Services/Serve setup (a separate, standalone
-  Tailscale add-on) isn't enough for that specific case. Off by default;
-  needs `NET_ADMIN`/`NET_RAW` + `/dev/net/tun` only when `tailscale_auth_key`
-  is set.
+  Tailscale add-on) isn't enough for that specific case. Off by default.
+  `tailscaled` runs with `--tun=userspace-networking`, which is what keeps
+  "expose only the callback" true: in normal TUN mode the container would
+  get a tailnet IP and every port in it — including Next.js — would be
+  reachable by any tailnet device with no HA login in front, from the auth
+  key alone, funnel or not. Userspace mode also removes any need for
+  `NET_ADMIN`/`NET_RAW` or `/dev/net/tun`, so `config.yaml` requests no
+  capabilities and no devices.
 - The Dockerfile sets `DISABLE_TLS_HEADERS=true`, which makes `next.config.ts`
   drop `Strict-Transport-Security` and the CSP's `upgrade-insecure-requests`.
   Both assume a TLS-terminating proxy in front (true for §1–§11's launchd +

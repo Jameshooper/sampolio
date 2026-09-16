@@ -14,20 +14,19 @@ const forceHttps = process.env.DISABLE_TLS_HEADERS !== 'true';
 
 // X-Frame-Options: DENY and the CSP's frame-ancestors 'none' block ANY
 // framing — including Home Assistant's own Ingress, which embeds the add-on
-// in an iframe inside the HA frontend. There's no static allowlist that
-// works here: the HA frontend's own origin varies by how the browser reaches
-// it (LAN IP, homeassistant.local, a Tailscale hostname, Nabu Casa's cloud
-// domain), so frame-ancestors can't name it in advance. ALLOW_IFRAME_EMBED
-// is set only by an add-on build with ingress: true in config.yaml, and only
-// alongside dropping the add-on's own direct port — Ingress access is
-// already gated by an authenticated HA session before Supervisor proxies the
-// request through, so the framing check becomes redundant for that path,
-// and there's no other browsable path left where it would have mattered.
+// in an iframe inside the HA frontend. Ingress serves the add-on from the HA
+// frontend's OWN origin (https://<ha-host>/api/hassio_ingress/<token>/), so
+// the framing page and the framed page are same-origin and
+// `frame-ancestors 'self'` is enough to allow it — only X-Frame-Options,
+// which has no allowlist that can express this, has to go. ALLOW_IFRAME_EMBED
+// therefore relaxes framing to same-origin rather than removing it: a
+// third-party page still cannot frame this app.
 const allowFraming = process.env.ALLOW_IFRAME_EMBED === 'true';
 
 const securityHeaders = [
-  // Prevent clickjacking — omitted when embedding is deliberately allowed
-  // (Home Assistant Ingress). See allowFraming above.
+  // Prevent clickjacking. Dropped only for the Ingress build, where CSP's
+  // frame-ancestors 'self' (below) carries the same protection in a form
+  // that still permits Home Assistant's same-origin iframe.
   ...(allowFraming ? [] : [{
     key: 'X-Frame-Options',
     value: 'DENY',
@@ -69,7 +68,9 @@ const securityHeaders = [
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "connect-src 'self'",
-      ...(allowFraming ? [] : ["frame-ancestors 'none'"]),
+      // Never dropped — only relaxed from 'none' to 'self' for the Ingress
+      // build, which needs Home Assistant's same-origin iframe to work.
+      allowFraming ? "frame-ancestors 'self'" : "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
       ...(forceHttps ? ["upgrade-insecure-requests"] : []),

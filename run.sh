@@ -75,9 +75,21 @@ NEXT_INTERNAL_PORT="${NEXT_INTERNAL_PORT:-3998}"
 # persisted under /data so it doesn't need re-approval on every restart.
 # Clear tailscale_auth_key entirely to disable this whole block and fall
 # back to whatever Tailscale connectivity is set up separately.
+#
+# --tun=userspace-networking is load-bearing for security, not a detail. In
+# normal TUN mode tailscaled gives the container a tailnet IP and hands
+# inbound tailnet packets to its kernel stack, which makes EVERY port bound
+# in this container reachable by every device on the tailnet — with no Home
+# Assistant login in front of it. That would silently reopen exactly the
+# bypass `ingress: true` exists to close, just from setting an auth key.
+# Userspace mode terminates inbound traffic inside tailscaled instead, so
+# only what `tailscale serve`/`funnel` explicitly publishes is reachable.
+# It also means no TUN device and no NET_ADMIN are needed at all (see
+# config.yaml, which requests neither).
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
   mkdir -p /data/tailscale /var/run/tailscale
   tailscaled \
+    --tun=userspace-networking \
     --state=/data/tailscale/tailscaled.state \
     --socket=/var/run/tailscale/tailscaled.sock \
     >/data/tailscale/tailscaled.log 2>&1 &
@@ -107,12 +119,15 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
   fi
 fi
 
-# Next.js listens on an internal-only port; the Home Assistant Ingress
-# rewriting proxy (ha-ingress-proxy.mjs) takes the actual $PORT Supervisor
-# and Tailscale Funnel connect to. See that file for why this is needed —
+# Next.js listens on loopback only; the Home Assistant Ingress rewriting
+# proxy (ha-ingress-proxy.mjs) takes the actual $PORT Supervisor and
+# Tailscale Funnel connect to. See that file for why the proxy is needed —
 # short version: Next.js's root-absolute asset/link paths don't survive
 # being served under Ingress's per-restart-rotating path prefix without it.
-node node_modules/next/dist/bin/next start -p "$NEXT_INTERNAL_PORT" -H 0.0.0.0 &
+# 127.0.0.1, not 0.0.0.0: nothing but the proxy in this same container ever
+# talks to Next.js directly, so binding it wider would only expose an
+# unrewritten, unproxied copy of the app to the add-on network.
+node node_modules/next/dist/bin/next start -p "$NEXT_INTERNAL_PORT" -H 127.0.0.1 &
 
 node -e "
   const net = require('net');

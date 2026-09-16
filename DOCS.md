@@ -48,10 +48,19 @@ to an insecure default (matching the non-Docker deployment's behavior — see
 
 Setting `tailscale_auth_key` runs `tailscaled` inside the add-on's own
 container (state persisted under `/data/tailscale`, so it doesn't need
-re-approval on every restart). This needs `NET_ADMIN`/`NET_RAW` and
-`/dev/net/tun`, which `config.yaml` requests — deliberately narrower than a
-full Tailscale add-on (no `SYS_ADMIN`, no `host_network`), so Sampolio keeps
-its own network namespace and published port regardless.
+re-approval on every restart), in **userspace networking mode**
+(`--tun=userspace-networking`).
+
+That mode is a security requirement here, not a detail. In normal TUN mode
+tailscaled gives the container a tailnet IP and delivers inbound tailnet
+packets to its kernel stack, which makes every port in the container
+reachable by every device on the tailnet — with no Home Assistant login in
+front of it. Setting an auth key alone would then reopen exactly the bypass
+`ingress: true` exists to close, whether or not `tailscale_funnel` is on.
+Userspace mode terminates inbound traffic inside tailscaled instead, so only
+what `tailscale serve`/`funnel` explicitly publishes is reachable. It also
+needs no TUN device and no `NET_ADMIN`/`NET_RAW`, which is why `config.yaml`
+requests **no** `privileged:` capabilities and **no** `devices:` at all.
 
 This exists specifically for `tailscale_funnel`: a **standalone** Tailscale
 add-on's Services/Serve feature is tailnet-only, but some flows — notably an
@@ -99,11 +108,12 @@ instance — including 2FA, if you have it configured — protects Sampolio the
 same way, since nothing reaches it without first authenticating to HA.
 
 To make that iframe embedding possible at all, this build sets
-`ALLOW_IFRAME_EMBED=true` (Dockerfile), which drops `X-Frame-Options: DENY`
-and the CSP's `frame-ancestors 'none'` — see the comment above `allowFraming`
-in `next.config.ts` for why that's only a safe tradeoff *because* there's no
-other browsable path left (no direct port, no plain-Tailscale-Services
-access) where an unrelated page framing Sampolio could matter.
+`ALLOW_IFRAME_EMBED=true` (Dockerfile). Ingress serves the add-on from the HA
+frontend's *own* origin, so the framing page and the framed page are
+same-origin: that build **relaxes** the CSP's `frame-ancestors` from `'none'`
+to `'self'` and drops only `X-Frame-Options` (which has no allowlist that can
+express "same origin only"). Framing protection is not removed — a
+third-party page still cannot frame this app.
 
 **This only holds if it stays the only way in.** If you also keep a
 standalone Tailscale add-on's `svc:sampolio` Service (or re-add a direct

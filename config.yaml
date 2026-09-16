@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.18.1"
+version: "3.19.0"
 slug: sampolio
 description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -21,16 +21,12 @@ panel_icon: mdi:cash-multiple
 map:
   - type: data
     read_only: false
-# NET_ADMIN/NET_RAW + /dev/net/tun are only used by the optional embedded
-# Tailscale in run.sh (tailscale_auth_key option) — absent that option, they
-# grant tailscaled nothing to do. Deliberately narrower than a full Tailscale
-# add-on: no SYS_ADMIN, no host_network, so Sampolio keeps its own published
-# port and network namespace either way.
-privileged:
-  - NET_ADMIN
-  - NET_RAW
-devices:
-  - /dev/net/tun
+# No `privileged:` and no `devices:` on purpose. The optional embedded
+# Tailscale (run.sh) runs tailscaled with --tun=userspace-networking, which
+# needs neither a TUN device nor NET_ADMIN/NET_RAW. Granting those would let
+# an app-level compromise reach raw sockets and interface control on Home
+# Assistant's internal bridge — lateral movement toward Supervisor and other
+# add-ons — for a capability this add-on never actually needs.
 options:
   auth_secret: ""
   encryption_key: ""
