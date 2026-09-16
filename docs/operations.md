@@ -271,7 +271,19 @@ add this repo's URL). Full install steps and the option reference are in
   Reintroducing a direct port or a standalone Tailscale add-on's
   `svc:sampolio` Service alongside Ingress reopens a bypass around HA's
   login and defeats the point of using Ingress at all.
-- Ingress mounts the app at a path containing a token that **rotates every
+- **The add-on publishes port 3999; it does not use Ingress.** Ingress would
+  put Home Assistant's own login and 2FA in front, but the app does not render
+  under it (see [`known-gaps.md`](known-gaps.md) #4) — so on this port
+  Sampolio's own NextAuth login is the only authentication. Keep the port off
+  the public internet. `ALLOW_IFRAME_EMBED` is correspondingly **not** set in
+  the `Dockerfile`, so `X-Frame-Options: DENY` and `frame-ancestors 'none'`
+  apply; the cost is that Sampolio cannot be embedded in a Home Assistant
+  iframe panel. Verified in a browser on the published port: sign-up, sign-in,
+  client-side navigation across Cashflow/Goals/Split/Settings, and 390 px with
+  no horizontal overflow, all with zero failed requests.
+- The Ingress machinery below is retained but **currently unused**, because the
+  proxy also sanitises `X-Forwarded-For` (see `ha-ingress-proxy.mjs`) and its
+  rewriting is verified lossless. Ingress mounts the app at a path containing a token that **rotates every
   add-on restart** (`/api/hassio_ingress/<token>/`), which a static Next.js
   `basePath` can't track. Next.js/React also emit root-absolute asset and
   link paths (`/_next/...`, `<Link href="/settings">`, NextAuth's redirect

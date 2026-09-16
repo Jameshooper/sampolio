@@ -1,6 +1,6 @@
 {
   "name": "sampolio",
-  "version": "3.19.3",
+  "version": "3.20.0",
   "private": true,
   "license": "MIT",
   "packageManager": "pnpm@12.3.4",

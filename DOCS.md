@@ -21,9 +21,9 @@ installs of the same app.
    take a few minutes.
 3. Open the **Configuration** tab and fill in the required options (below)
    before starting.
-4. Start the add-on, then use **Open Web UI**, or the sidebar panel it adds —
-   this is an **Ingress** add-on with no direct port, so it's only reachable
-   through an authenticated Home Assistant session. See "Access" below.
+4. Start the add-on, then use **Open Web UI** (it serves on port 3999).
+   Read "Access" below first: Home Assistant does **not** authenticate this
+   port for you.
 
 ## Configuration options
 
@@ -31,7 +31,7 @@ installs of the same app.
 |---|---|---|
 | `auth_secret` | **Yes** | NextAuth session secret. Generate with `openssl rand -base64 32`. |
 | `encryption_key` | **Yes** | AES-256-GCM master key for the encrypted data files. Generate with `openssl rand -hex 32`. **Never change this once data exists** — existing accounts become unreadable. |
-| `auth_url` | **Yes** | A syntactically valid `https://` URL for NextAuth's own internal use. Since this add-on is Ingress-only (no fixed public hostname — Ingress can be reached via a LAN IP, `homeassistant.local`, a Tailscale hostname, or Nabu Casa's cloud domain depending on how you're connected), it doesn't need to exactly match whatever URL you're actually browsing through; `AUTH_TRUST_HOST=true` (set by `run.sh`) plus this app's own use of relative redirects makes that unnecessary. Any stable placeholder like `https://sampolio.local` works. |
+| `auth_url` | **Yes** | A syntactically valid `https://` URL for NextAuth's own internal use. It doesn't need to exactly match whatever URL you're actually browsing through (a LAN IP, `homeassistant.local`, or a Tailscale hostname all reach the same port); `AUTH_TRUST_HOST=true` (set by `run.sh`) plus this app's own use of relative redirects makes that unnecessary. Any stable placeholder like `https://sampolio.local` works. |
 | `enable_banking_app_id` | No | Enable Banking (PSD2 AIS) application id. Leave all three `enable_banking_*` options blank to keep bank sync fully disabled (zero network calls) — see [`docs/bank-sync.md`](docs/bank-sync.md). |
 | `enable_banking_redirect_url` | No | Must be `<auth_url>/api/bank/callback` and publicly reachable if bank sync is enabled. |
 | `enable_banking_private_key` | No | The RS256 PKCS#8 PEM contents (not a file path) for the Enable Banking application. Written to `/data/sampolio/enable_banking_private_key.pem` (mode `0600`) inside the add-on's persistent storage at startup. |
@@ -55,8 +55,8 @@ That mode is a security requirement here, not a detail. In normal TUN mode
 tailscaled gives the container a tailnet IP and delivers inbound tailnet
 packets to its kernel stack, which makes every port in the container
 reachable by every device on the tailnet — with no Home Assistant login in
-front of it. Setting an auth key alone would then reopen exactly the bypass
-`ingress: true` exists to close, whether or not `tailscale_funnel` is on.
+front of it. Setting an auth key alone would then quietly put the whole app
+on your tailnet, whether or not `tailscale_funnel` is on.
 Userspace mode terminates inbound traffic inside tailscaled instead, so only
 what `tailscale serve`/`funnel` explicitly publishes is reachable. It also
 needs no TUN device and no `NET_ADMIN`/`NET_RAW`, which is why `config.yaml`
@@ -99,30 +99,35 @@ and restarts. Include this add-on's data in your normal Home Assistant
 
 ## Access
 
-This add-on has **no direct port** — `config.yaml` sets `ingress: true` with
-no `ports`/`webui`, so the only way in day to day is through an
-**authenticated Home Assistant session**: Supervisor proxies Sampolio inside
-an iframe in the HA frontend (from the add-on page's "Open Web UI", or the
-sidebar panel it adds). Whatever login method protects your Home Assistant
-instance — including 2FA, if you have it configured — protects Sampolio the
-same way, since nothing reaches it without first authenticating to HA.
+The add-on publishes **port 3999**; it does not use Home Assistant Ingress.
+Ingress would put HA's own login and 2FA in front of Sampolio, which would be
+strictly better, but the app does not render under it — Next.js needs a
+build-time `basePath` to match the rotating ingress-token path prefix, and
+that token isn't known until the add-on runs. This is recorded in the repo's
+`docs/known-gaps.md` #4 and will be revisited if Next.js gains runtime
+base-path support.
 
-To make that iframe embedding possible at all, this build sets
-`ALLOW_IFRAME_EMBED=true` (Dockerfile). Ingress serves the add-on from the HA
-frontend's *own* origin, so the framing page and the framed page are
-same-origin: that build **relaxes** the CSP's `frame-ancestors` from `'none'`
-to `'self'` and drops only `X-Frame-Options` (which has no allowlist that can
-express "same origin only"). Framing protection is not removed — a
-third-party page still cannot frame this app.
+**What that means for you: on this port, Sampolio's own login is the only
+thing protecting your financial data.** There is no Home Assistant session
+check in front of it. Anyone who can reach `http://<your-ha-host>:3999` gets
+the sign-in page. So:
 
-**This only holds if it stays the only way in.** If you also keep a
-standalone Tailscale add-on's `svc:sampolio` Service (or re-add a direct
-port), that path bypasses HA's login/2FA entirely — Ingress isn't a security
-boundary you also have, it's the boundary, so anything parallel to it
-undermines the point of using it. The one deliberate exception is the
-scoped Tailscale Funnel path (`tailscale_funnel`), which exposes only
-`/api/bank/callback` — not a browsable page, and unrelated to this iframe
-concern.
+- Do **not** port-forward 3999 or otherwise expose it to the internet.
+- Reach it over your LAN or your tailnet (a standalone Tailscale add-on's
+  Serve/Services is tailnet-only and fine for this).
+- Use a strong, unique password for your Sampolio account.
+
+The one deliberate public exception is the scoped Tailscale Funnel path
+(`tailscale_funnel`), which publishes only `/api/bank/callback` — not a
+browsable page — and which `run.sh` tears down again when you turn the option
+off. See "Embedded Tailscale".
+
+Because Ingress is not used, `ALLOW_IFRAME_EMBED` is **not** set, so
+`X-Frame-Options: DENY` and `frame-ancestors 'none'` both apply. That blocks
+clickjacking, and it also means Sampolio cannot be embedded in a Home
+Assistant iframe panel — open it in its own tab.
+
+
 
 ## Updating
 

@@ -24,13 +24,12 @@ RUN npm i -g pnpm@12.3.4
 # in case it's read at next start's boot instead — cheap either way.
 ENV DISABLE_TLS_HEADERS=true
 
-# This build runs as a Home Assistant Ingress add-on (config.yaml:
-# ingress: true, no direct port) — HA embeds it in an iframe inside its own
-# frontend, which X-Frame-Options: DENY / frame-ancestors 'none' would
-# otherwise block outright. See the comment above allowFraming in
-# next.config.ts for why this is only safe alongside dropping the direct
-# port entirely.
-ENV ALLOW_IFRAME_EMBED=true
+# Deliberately NOT setting ALLOW_IFRAME_EMBED. It existed only because Home
+# Assistant Ingress renders the add-on inside an iframe; the add-on now
+# publishes a port instead (config.yaml), so X-Frame-Options: DENY and
+# frame-ancestors 'none' stay on. The cost is that Sampolio cannot be embedded
+# in a Home Assistant iframe panel — open it in its own tab. Re-enable only
+# alongside a framing ancestor you actually trust.
 
 COPY . .
 RUN pnpm install --frozen-lockfile
@@ -49,7 +48,6 @@ FROM node:26-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV DISABLE_TLS_HEADERS=true
-ENV ALLOW_IFRAME_EMBED=true
 
 # Optional embedded Tailscale (see run.sh) — only used when the add-on's
 # tailscale_auth_key option is set. Alpine's own package keeps this in step

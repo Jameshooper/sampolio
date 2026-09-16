@@ -69,13 +69,19 @@ describe('add-on manifest', () => {
 });
 
 describe('add-on manifest security posture', () => {
-  it('serves through Ingress and publishes no direct port', () => {
-    // A direct port is reachable without a Home Assistant session, which
-    // bypasses whatever login and 2FA protects HA itself — the entire reason
-    // this add-on is Ingress-only.
-    expect(configYaml).toMatch(/^ingress:\s*true/m);
-    expect(configYaml).not.toMatch(/^ports:/m);
-    expect(configYaml).not.toMatch(/^webui:/m);
+  it('publishes the web UI on a port, since Ingress does not render', () => {
+    // Ingress would put Home Assistant's own login and 2FA in front, but the
+    // app cannot render under it without a build-time basePath (known-gaps #4).
+    // Whoever flips this back must make the app actually render first.
+    expect(configYaml).toMatch(/^ports:/m);
+    expect(configYaml).not.toMatch(/^ingress:\s*true/m);
+  });
+
+  it('warns in ports_description that nothing authenticates in front', () => {
+    // On this port Sampolio's own login is the only gate. That has to be
+    // visible where the port is exposed, not only in the docs.
+    const desc = configYaml.match(/^ports_description:\n\s+3999\/tcp:\s*(.+)$/m)?.[1] ?? '';
+    expect(desc.toLowerCase()).toContain('no home assistant auth');
   });
 
   it('requests no container privileges or device access', () => {
@@ -88,24 +94,31 @@ describe('add-on manifest security posture', () => {
     expect(configYaml).not.toMatch(/^host_network:\s*true/m);
   });
 
-  it('keeps the ingress port matching the port run.sh gives the proxy', () => {
-    const ingressPort = configYaml.match(/^ingress_port:\s*(\d+)/m)?.[1];
+  it('publishes the same port run.sh gives the proxy', () => {
+    // A mismatch publishes a port nothing listens on, and leaves the real one
+    // reachable or not depending on Docker's defaults rather than on intent.
+    const published = configYaml.match(/^ports:\n\s+(\d+)\/tcp:\s*(\d+)/m);
     const runSh = fs.readFileSync(path.join(REPO_ROOT, 'run.sh'), 'utf8');
     const defaultPort = runSh.match(/^PORT="\$\{PORT:-(\d+)\}"/m)?.[1];
-    expect(ingressPort).toBe(defaultPort);
+    expect(published?.[1]).toBe(defaultPort);
+    expect(published?.[2]).toBe(defaultPort);
   });
 });
 
 describe('add-on image', () => {
   const dockerfile = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf8');
 
-  it('sets the header gates the containerised deployment needs', () => {
-    // DISABLE_TLS_HEADERS: next start serves plain http here, and HSTS +
-    // upgrade-insecure-requests made the browser rewrite every asset request
-    // to a nonexistent https listener — a white screen with a clean server log.
-    // ALLOW_IFRAME_EMBED: Ingress renders the add-on in an iframe.
+  it('drops the forced-https headers the container cannot satisfy', () => {
+    // next start serves plain http here, and HSTS + upgrade-insecure-requests
+    // made the browser rewrite every asset request to a nonexistent https
+    // listener — a white screen with a clean server log.
     expect(dockerfile).toMatch(/ENV DISABLE_TLS_HEADERS=true/);
-    expect(dockerfile).toMatch(/ENV ALLOW_IFRAME_EMBED=true/);
+  });
+
+  it('never re-enables iframe embedding', () => {
+    // Only Ingress needed it. On a published port, dropping X-Frame-Options
+    // and frame-ancestors would expose the app to clickjacking from any page.
+    expect(dockerfile).not.toMatch(/ENV ALLOW_IFRAME_EMBED=true/);
   });
 
   it('ships the ingress proxy at the path run.sh execs', () => {

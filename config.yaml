@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.19.3"
+version: "3.20.0"
 slug: sampolio
 description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -8,15 +8,23 @@ arch:
   - aarch64
 startup: application
 boot: auto
-# Ingress-only: no direct port. Reachable exclusively through an
-# authenticated Home Assistant session (Supervisor proxies the iframe), plus
-# the separately-scoped Tailscale Funnel path for the bank callback (run.sh)
-# — see docs/operations.md §12. If you need a direct LAN/Tailscale-Services
-# port again, that reopens the bypass around HA's own login/2FA this exists
-# to close; add `ports`/`ports_description`/`webui` back deliberately.
-ingress: true
-ingress_port: 3999
-ingress_panel: true
+# A published port, NOT Ingress. Ingress would put Home Assistant's own login
+# and 2FA in front of the app, which is strictly better, but the app does not
+# render under it: Next.js needs a build-time `basePath` to match the
+# ingress-token path prefix client-side, and that token is not known until the
+# add-on runs. Verified in a browser against a mock Supervisor — see
+# docs/known-gaps.md #4 and docs/operations.md §12. Revisit if Next.js gains
+# runtime base-path support.
+#
+# Consequence to be deliberate about: on this port the ONLY authentication is
+# Sampolio's own NextAuth login. Keep the port off the public internet — the
+# separately-scoped Tailscale Funnel path for the bank callback (run.sh) is
+# the one intentional exception, and it publishes that single route.
+ports:
+  3999/tcp: 3999
+ports_description:
+  3999/tcp: Sampolio web UI (protect at the network layer — no Home Assistant auth in front)
+webui: "http://[HOST]:[PORT:3999]"
 panel_icon: mdi:cash-multiple
 map:
   - type: data
