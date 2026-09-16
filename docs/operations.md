@@ -270,6 +270,21 @@ add this repo's URL). Full install steps and the option reference are in
   the only port. Reintroducing a direct port or a standalone Tailscale
   add-on's `svc:sampolio` Service alongside Ingress reopens a bypass around
   HA's login and defeats the point of using Ingress at all.
+- Ingress mounts the app at a path containing a token that **rotates every
+  add-on restart** (`/api/hassio_ingress/<token>/`), which a static Next.js
+  `basePath` can't track. Next.js/React also emit root-absolute asset and
+  link paths (`/_next/...`, `<Link href="/settings">`, NextAuth's redirect
+  `Location`) that a browser resolves against the domain root, not the
+  current URL — so without correction they silently drop the ingress prefix
+  and 404 against Home Assistant's own routing. `ha-ingress-proxy.mjs`
+  fixes this: it sits in front of Next.js (which `run.sh` moves to an
+  internal-only port, `NEXT_INTERNAL_PORT`) and rewrites those root-absolute
+  references — HTML attributes, the same escaped inside React Server
+  Components' streamed `<script>` payload, plain JSON in
+  `manifest.webmanifest`, and redirect `Location` headers — using the
+  current request's `X-Ingress-Path` header, which Supervisor sends fresh on
+  every request. Requests with no `X-Ingress-Path` (direct access, or the
+  Tailscale Funnel bank-callback path) pass through completely unmodified.
 - This is unrelated to `HA_WEBHOOK_URL` (§9), which is Sampolio *sending*
   Split activity notifications to Home Assistant, not Home Assistant running
   Sampolio.

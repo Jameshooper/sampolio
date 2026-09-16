@@ -60,5 +60,11 @@ COPY --from=builder /app ./
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
+# Rewrites root-absolute asset/link paths for Home Assistant Ingress's
+# per-restart-rotating path prefix — see the file's own header comment for
+# why. run.sh puts this in front of Next.js (which moves to an internal
+# port) rather than exposing it directly.
+COPY ha-ingress-proxy.mjs /ha-ingress-proxy.mjs
+
 EXPOSE 3999
 ENTRYPOINT ["/run.sh"]

@@ -66,6 +66,7 @@ if [ -n "${HA_WEBHOOK_URL:-}" ]; then
 fi
 
 PORT="${PORT:-3999}"
+NEXT_INTERNAL_PORT="${NEXT_INTERNAL_PORT:-3998}"
 
 # Optional embedded Tailscale — only runs when tailscale_auth_key is set.
 # Joins this container as its own tailnet device (separate from any
@@ -96,6 +97,9 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
   # port 443; `funnel 443 on` then promotes whatever `serve` already exposes
   # on that port, so anything not explicitly mapped (the login page, every
   # other route) stays unreachable from outside the tailnet. Off by default.
+  # Targets $PORT (the ingress-proxy below), not Next.js directly — the
+  # proxy passes non-ingress requests straight through unmodified, so this
+  # behaves identically to hitting Next.js itself.
   if [ "${TAILSCALE_FUNNEL:-}" = "true" ]; then
     tailscale --socket=/var/run/tailscale/tailscaled.sock serve --bg \
       --set-path=/api/bank/callback "http://127.0.0.1:$PORT/api/bank/callback"
@@ -103,4 +107,27 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
   fi
 fi
 
-exec node node_modules/next/dist/bin/next start -p "$PORT" -H 0.0.0.0
+# Next.js listens on an internal-only port; the Home Assistant Ingress
+# rewriting proxy (ha-ingress-proxy.mjs) takes the actual $PORT Supervisor
+# and Tailscale Funnel connect to. See that file for why this is needed —
+# short version: Next.js's root-absolute asset/link paths don't survive
+# being served under Ingress's per-restart-rotating path prefix without it.
+node node_modules/next/dist/bin/next start -p "$NEXT_INTERNAL_PORT" -H 0.0.0.0 &
+
+node -e "
+  const net = require('net');
+  const port = process.argv[1];
+  const tryConnect = (attempt) => {
+    const s = net.connect(port, '127.0.0.1');
+    s.on('connect', () => { s.destroy(); process.exit(0); });
+    s.on('error', () => {
+      if (attempt >= 30) process.exit(1);
+      setTimeout(() => tryConnect(attempt + 1), 1000);
+    });
+  };
+  tryConnect(0);
+" "$NEXT_INTERNAL_PORT"
+
+export PROXY_PORT="$PORT"
+export NEXT_INTERNAL_PORT
+exec node /ha-ingress-proxy.mjs
