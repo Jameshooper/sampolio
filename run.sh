@@ -69,12 +69,11 @@ PORT="${PORT:-3999}"
 
 # Optional embedded Tailscale — only runs when tailscale_auth_key is set.
 # Joins this container as its own tailnet device (separate from any
-# standalone Tailscale add-on), state persisted under /data so it doesn't
-# need re-approval on every restart. tailscale_funnel additionally exposes
-# $PORT to the public internet via Tailscale Funnel — off by default; clear
-# tailscale_auth_key entirely to disable this whole block and fall back to
-# whatever Tailscale connectivity is set up separately (e.g. a standalone
-# Tailscale add-on's Services config).
+# standalone Tailscale add-on and its "svc:sampolio" Service — hostname is
+# deliberately distinct below to avoid colliding with that name). State is
+# persisted under /data so it doesn't need re-approval on every restart.
+# Clear tailscale_auth_key entirely to disable this whole block and fall
+# back to whatever Tailscale connectivity is set up separately.
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
   mkdir -p /data/tailscale /var/run/tailscale
   tailscaled \
@@ -89,11 +88,18 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
 
   tailscale --socket=/var/run/tailscale/tailscaled.sock up \
     --authkey="$TAILSCALE_AUTHKEY" \
-    --hostname=sampolio \
+    --hostname=sampolio-callback \
     --accept-dns=false
 
+  # tailscale_funnel exposes ONLY /api/bank/callback to the public internet
+  # — never the whole app. `serve --set-path` maps just that one route on
+  # port 443; `funnel 443 on` then promotes whatever `serve` already exposes
+  # on that port, so anything not explicitly mapped (the login page, every
+  # other route) stays unreachable from outside the tailnet. Off by default.
   if [ "${TAILSCALE_FUNNEL:-}" = "true" ]; then
-    tailscale --socket=/var/run/tailscale/tailscaled.sock funnel --bg "$PORT"
+    tailscale --socket=/var/run/tailscale/tailscaled.sock serve --bg \
+      --set-path=/api/bank/callback "http://127.0.0.1:$PORT/api/bank/callback"
+    tailscale --socket=/var/run/tailscale/tailscaled.sock funnel --bg 443 on
   fi
 fi
 
