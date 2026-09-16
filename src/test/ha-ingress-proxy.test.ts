@@ -57,6 +57,23 @@ describe('rewriteBody', () => {
     expect(out).toContain(`"src":"${PREFIX}/icons/icon-192.png"`);
   });
 
+  it('prefixes CSS url() references in every quoting style', () => {
+    // Fonts are reached this way. Observed in a browser: without it the woff2
+    // files 404 against the Home Assistant origin and typography silently
+    // falls back to system fonts.
+    const css = '@font-face{src:url(/_next/static/media/a.woff2) format("woff2")}' +
+      '.x{background:url("/icons/i.png")}.y{background:url(\'/icons/j.png\')}';
+    const out = rewriteBody(css, PREFIX);
+    expect(out).toContain(`url(${PREFIX}/_next/static/media/a.woff2)`);
+    expect(out).toContain(`url("${PREFIX}/icons/i.png")`);
+    expect(out).toContain(`url('${PREFIX}/icons/j.png')`);
+  });
+
+  it('leaves data: and cross-origin CSS urls alone', () => {
+    const css = '.a{background:url(data:image/png;base64,AAA)}.b{src:url(//cdn.example/f.woff2)}';
+    expect(rewriteBody(css, PREFIX)).toBe(css);
+  });
+
   it('leaves protocol-relative URLs alone', () => {
     // //cdn.example/x is another host entirely — prefixing it would break it.
     const html = '<script src="//cdn.example.com/x.js"></script>';
@@ -166,15 +183,17 @@ describe('ingressPrefixOf', () => {
 });
 
 describe('isRewritableType', () => {
-  it('rewrites markup and manifest types', () => {
+  it('rewrites markup, manifest, flight and stylesheet types', () => {
     expect(isRewritableType('text/html; charset=utf-8')).toBe(true);
     expect(isRewritableType('application/manifest+json')).toBe(true);
+    expect(isRewritableType('text/x-component')).toBe(true);
+    expect(isRewritableType('text/css')).toBe(true);
   });
 
-  it('leaves binary and stylesheet responses untouched', () => {
-    // Buffering/among rewriting an image would corrupt it.
+  it('leaves binary responses untouched', () => {
+    // Buffering and rewriting an image would corrupt it.
     expect(isRewritableType('image/png')).toBe(false);
-    expect(isRewritableType('text/css')).toBe(false);
+    expect(isRewritableType('font/woff2')).toBe(false);
     expect(isRewritableType('')).toBe(false);
   });
 });

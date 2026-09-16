@@ -41,6 +41,11 @@ const REWRITABLE_TYPES = [
   // without it only the first page load works and every navigation after it
   // resolves against the Home Assistant origin root instead of the add-on.
   'text/x-component',
+  // Stylesheets reference fonts and images as url(/_next/static/media/...).
+  // Confirmed in a browser driven through a mock Supervisor: without this the
+  // woff2 files 404 against the Home Assistant origin and the app silently
+  // falls back to system fonts.
+  'text/css',
 ];
 
 // Plain HTML: href="/foo", src="/foo", action="/foo" — never "//foo", which
@@ -53,6 +58,16 @@ const ATTR_ESCAPED_RE = /\\"(href|src|action)\\":\\"(\/(?!\/)[^"\\]*)\\"/g;
 // icon src fields, served as a standalone JSON document rather than
 // embedded in HTML/JS.
 const JSON_RE = /"(href|src|action|start_url)":"(\/(?!\/)[^"]*)"/g;
+// React Server Components preload hints: HL["/_next/static/media/x.woff2",
+// "font"] — a bare string in an array, matching none of the key-based patterns
+// above. Appears escaped inside the HTML's inline flight payload and plain in
+// a text/x-component response. Found with a browser: the two preloaded woff2
+// files were the only things still escaping the mount.
+const FLIGHT_HINT_RE = /\bHL\["(\/(?!\/)[^"]*)"/g;
+const FLIGHT_HINT_ESCAPED_RE = /\bHL\[\\"(\/(?!\/)[^"\\]*)\\"/g;
+// CSS url(...) — bare, single- or double-quoted. Also catches inline <style>
+// blocks in the HTML document, which go through the same rewriter.
+const CSS_URL_RE = /url\(\s*(['"]?)(\/(?!\/)[^'")]*)\1\s*\)/g;
 
 // A path that already carries the prefix must be left alone. Responses are
 // rewritten once each, so this is not about repeated passes: the app itself
@@ -68,6 +83,9 @@ export function rewriteBody(body, prefix) {
   let out = body.replace(ATTR_RE, (_m, attr, path) => `${attr}="${apply(path)}"`);
   out = out.replace(JSON_RE, (_m, attr, path) => `"${attr}":"${apply(path)}"`);
   out = out.replace(ATTR_ESCAPED_RE, (_m, attr, path) => `\\"${attr}\\":\\"${apply(path)}\\"`);
+  out = out.replace(CSS_URL_RE, (_m, quote, path) => `url(${quote}${apply(path)}${quote})`);
+  out = out.replace(FLIGHT_HINT_RE, (_m, path) => `HL["${apply(path)}"`);
+  out = out.replace(FLIGHT_HINT_ESCAPED_RE, (_m, path) => `HL[\\"${apply(path)}\\"`);
   return out;
 }
 
@@ -122,6 +140,21 @@ export function rewriteLocation(location, prefix, host) {
 
   if (!location.startsWith('/')) return location; // relative — already correct
   return prefixPathAndQuery(location, prefix);
+}
+
+// Next also preloads fonts through a `Link:` RESPONSE HEADER
+// (</_next/static/media/x.woff2>; rel=preload; as="font"), not just markup.
+// Found with a browser: this was the last thing still escaping the mount
+// after every body-level pattern was covered.
+const LINK_TARGET_RE = /<(\/(?!\/)[^>]*)>/g;
+
+export function rewriteLinkHeader(value, prefix) {
+  if (!value || !prefix) return value;
+  const one = (v) =>
+    v.replace(LINK_TARGET_RE, (whole, path) =>
+      alreadyPrefixed(path, prefix) ? whole : `<${prefix}${path}>`
+    );
+  return Array.isArray(value) ? value.map(one) : one(value);
 }
 
 export function isRewritableType(contentType) {
@@ -183,6 +216,9 @@ export function createProxyServer({ upstreamPort = UPSTREAM_PORT } = {}) {
         const outHeaders = { ...upstreamRes.headers };
         if (ingressPrefix && location) {
           outHeaders.location = rewriteLocation(location, ingressPrefix, req.headers.host);
+        }
+        if (ingressPrefix && outHeaders.link) {
+          outHeaders.link = rewriteLinkHeader(outHeaders.link, ingressPrefix);
         }
 
         if (!rewriteBodyContent) {
