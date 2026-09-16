@@ -78,9 +78,19 @@ whether anyone guesses it.
 This embedded device joins your tailnet as `sampolio-callback` — deliberately
 a different name from the standalone add-on's `svc:sampolio` Service, so the
 two don't collide. `ENABLE_BANKING_REDIRECT_URL` therefore needs its own
-hostname: `https://sampolio-callback.<your-tailnet-name>.ts.net/api/bank/callback`,
-**not** the `auth_url`/Services hostname you browse the app at day to day —
-register that exact URL with Enable Banking.
+hostname: `https://sampolio-callback.<your-tailnet-name>.ts.net/api/bank/callback`
+— register that exact URL with Enable Banking.
+
+**While linking a bank, browse the app at
+`https://sampolio-callback.<your-tailnet-name>.ts.net:8443`** (tailnet-only,
+set up automatically when `tailscale_funnel` is on), and set `auth_url` to
+that same URL. This is not cosmetic. The callback requires an authenticated
+session, and the session cookie is host-only: if you start the bank
+connection from any other hostname, the bank's redirect arrives at
+`sampolio-callback...` with no cookie, the callback bounces you to sign-in,
+and the single-use `code` and `state` are spent without the connection ever
+completing. Browsing on `:8443` works because cookies ignore the port number,
+so the session is sent with the redirect to `:443`.
 
 If you don't need public exposure, you likely don't need this at all — a
 separate standalone Tailscale add-on's Services config already gets you
@@ -107,14 +117,20 @@ that token isn't known until the add-on runs. This is recorded in the repo's
 `docs/known-gaps.md` #4 and will be revisited if Next.js gains runtime
 base-path support.
 
-**What that means for you: on this port, Sampolio's own login is the only
-thing protecting your financial data.** There is no Home Assistant session
-check in front of it. Anyone who can reach `http://<your-ha-host>:3999` gets
-the sign-in page. So:
+**You must reach it over HTTPS.** The session cookie is
+`__Secure-authjs.session-token`, which browsers refuse to store unless it
+arrives over HTTPS, so signing in at `http://<your-ha-host>:3999` fails — you
+land back on the sign-in page with no session. Use an HTTPS front door: a
+standalone Tailscale add-on's Serve/Services gives you a real certificate and
+a `*.ts.net` hostname pointing at this port, which is tailnet-only. (From the
+Home Assistant host itself, `http://localhost:3999` also works, because
+browsers treat localhost as trustworthy.) See `docs/known-gaps.md` #5.
+
+**And on this port, Sampolio's own login is the only thing protecting your
+financial data.** There is no Home Assistant session check in front of it. So:
 
 - Do **not** port-forward 3999 or otherwise expose it to the internet.
-- Reach it over your LAN or your tailnet (a standalone Tailscale add-on's
-  Serve/Services is tailnet-only and fine for this).
+- Keep the HTTPS front door tailnet-only.
 - Use a strong, unique password for your Sampolio account.
 
 The one deliberate public exception is the scoped Tailscale Funnel path

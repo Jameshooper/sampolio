@@ -126,9 +126,26 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
   # proxy passes non-ingress requests straight through unmodified, so this
   # behaves identically to hitting Next.js itself.
   if [ "${TAILSCALE_FUNNEL:-}" = "true" ]; then
-    tailscale --socket="$TAILSCALE_SOCKET" serve --bg \
+    # Public, port 443, exactly one path: the bank's PSD2 consent redirect.
+    # Funnel makes the whole PORT public — Tailscale cannot mix tailnet-only
+    # Serve and public Funnel on one port, the last command to configure it
+    # wins — so the scoping comes from mapping only this single path. Nothing
+    # else on :443 has a backend to reach.
+    tailscale --socket="$TAILSCALE_SOCKET" funnel --bg \
       --set-path=/api/bank/callback "http://127.0.0.1:$PORT/api/bank/callback"
-    tailscale --socket="$TAILSCALE_SOCKET" funnel --bg 443 on
+
+    # Tailnet-only, port 8443, the whole app — and this is load-bearing for
+    # the bank flow, not a convenience. /api/bank/callback requires an
+    # authenticated session, and the session cookie is host-only, so it is
+    # sent to the callback only if it was set on THIS hostname. Browsing the
+    # app anywhere else (a LAN IP, a different tailnet hostname) means the
+    # bank's redirect arrives with no cookie, the callback bounces to
+    # sign-in, and the single-use code and state are burnt with the
+    # connection never completed. Cookies ignore the port number
+    # (RFC 6265 §5.1.3), so a session established here on :8443 is sent with
+    # the bank's redirect to :443 above.
+    tailscale --socket="$TAILSCALE_SOCKET" serve --bg --https=8443 \
+      "http://127.0.0.1:$PORT"
   else
     # Explicit teardown, not just "skip the enable". `serve --bg` and `funnel`
     # persist their configuration in tailscaled's state file, and that state

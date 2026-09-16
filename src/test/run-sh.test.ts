@@ -299,18 +299,32 @@ describe('run.sh embedded Tailscale', () => {
     expect(res.stubLog).toContain('serve reset');
   });
 
-  it('publishes only the bank callback path when Funnel is on', async () => {
-    // `funnel 443 on` promotes whatever `serve` mapped on that port. Mapping
-    // the bare port instead of --set-path would put the login page and every
-    // other route on the public internet.
+  it('makes only the bank callback path public', async () => {
+    // Funnel publishes the whole port, so the only thing limiting exposure is
+    // that this single path is the one with a backend mapped. A funnel line
+    // without --set-path would put the login page on the public internet.
     const res = await runEntrypoint({
       ...REQUIRED,
       tailscale_auth_key: 'tskey-auth-test',
       tailscale_funnel: true,
     });
-    expect(res.stubLog).toContain('--set-path=/api/bank/callback');
-    expect(res.stubLog).toContain('funnel --bg 443 on');
-    expect(res.stubLog).not.toMatch(/serve --bg (?!--set-path)/);
+    const funnelLines = res.stubLog.split('\n').filter((l) => l.includes('funnel'));
+    expect(funnelLines.length).toBeGreaterThan(0);
+    for (const line of funnelLines) expect(line).toContain('--set-path=/api/bank/callback');
+  });
+
+  it('serves the whole app tailnet-only on a second port for the bank flow', async () => {
+    // The callback needs a session cookie, and that cookie is host-only — so
+    // the app has to be browsable on the SAME hostname the bank redirects to.
+    // Different port is fine: cookies ignore the port (RFC 6265 5.1.3).
+    const res = await runEntrypoint({
+      ...REQUIRED,
+      tailscale_auth_key: 'tskey-auth-test',
+      tailscale_funnel: true,
+    });
+    expect(res.stubLog).toMatch(/serve --bg --https=8443/);
+    // Whole-app mapping must never be the thing handed to funnel.
+    expect(res.stubLog).not.toMatch(/funnel[^\n]*--https=8443/);
   });
 
   it('treats a non-true funnel value as off, and tears down', async () => {
