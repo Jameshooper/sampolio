@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.16.2"
+version: "3.17.0"
 slug: sampolio
 description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -16,6 +16,16 @@ map:
   - type: data
     read_only: false
 webui: http://[HOST]:[PORT:3999]/
+# NET_ADMIN/NET_RAW + /dev/net/tun are only used by the optional embedded
+# Tailscale in run.sh (tailscale_auth_key option) — absent that option, they
+# grant tailscaled nothing to do. Deliberately narrower than a full Tailscale
+# add-on: no SYS_ADMIN, no host_network, so Sampolio keeps its own published
+# port and network namespace either way.
+privileged:
+  - NET_ADMIN
+  - NET_RAW
+devices:
+  - /dev/net/tun
 options:
   auth_secret: ""
   encryption_key: ""
@@ -24,6 +34,8 @@ options:
   enable_banking_redirect_url: ""
   enable_banking_private_key: ""
   ha_webhook_url: ""
+  tailscale_auth_key: ""
+  tailscale_funnel: false
 schema:
   auth_secret: password
   encryption_key: password
@@ -36,3 +48,5 @@ schema:
   enable_banking_redirect_url: str?
   enable_banking_private_key: password?
   ha_webhook_url: str?
+  tailscale_auth_key: password?
+  tailscale_funnel: bool

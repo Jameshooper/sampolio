@@ -42,6 +42,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV DISABLE_TLS_HEADERS=true
 
+# Optional embedded Tailscale (see run.sh) — only used when the add-on's
+# tailscale_auth_key option is set. Alpine's own package keeps this in step
+# with the base image's arch (aarch64/amd64) without a separate download.
+RUN apk add --no-cache tailscale
+
 COPY --from=builder /app ./
 COPY run.sh /run.sh
 RUN chmod +x /run.sh

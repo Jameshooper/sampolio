@@ -34,11 +34,36 @@ installs of the same app.
 | `enable_banking_redirect_url` | No | Must be `<auth_url>/api/bank/callback` and publicly reachable if bank sync is enabled. |
 | `enable_banking_private_key` | No | The RS256 PKCS#8 PEM contents (not a file path) for the Enable Banking application. Written to `/data/enable_banking_private_key.pem` inside the add-on's persistent storage at startup. |
 | `ha_webhook_url` | No | A Home Assistant webhook URL (`.../api/webhook/<id>`) that Sampolio's own Split feature POSTs shared-expense activity to — see `docs/features.md` "Home Assistant notifications". This is unrelated to installing the add-on itself; it lets Sampolio *notify* Home Assistant. |
+| `tailscale_auth_key` | No | An auth key from your Tailscale admin console (Settings → Keys). Joins this add-on's own container as a separate tailnet device (distinct from any standalone Tailscale add-on), so it needs its own approval on first connect if your tailnet requires it. Leave blank to disable — the add-on has no Tailscale of its own by default. See "Embedded Tailscale" below. |
+| `tailscale_funnel` | No | `true`/`false`, only meaningful when `tailscale_auth_key` is set. Exposes port `3999` (or whatever `PORT` is set to) to the **public internet** via Tailscale Funnel, not just your tailnet. Off by default. |
 
 Options marked required are enforced at container startup: the add-on exits
 immediately with a clear error if any are missing, rather than falling back
 to an insecure default (matching the non-Docker deployment's behavior — see
 `docs/operations.md` §8).
+
+## Embedded Tailscale (optional)
+
+Setting `tailscale_auth_key` runs `tailscaled` inside the add-on's own
+container (state persisted under `/data/tailscale`, so it doesn't need
+re-approval on every restart). This needs `NET_ADMIN`/`NET_RAW` and
+`/dev/net/tun`, which `config.yaml` requests — deliberately narrower than a
+full Tailscale add-on (no `SYS_ADMIN`, no `host_network`), so Sampolio keeps
+its own network namespace and published port regardless.
+
+This exists specifically for `tailscale_funnel`: a **standalone** Tailscale
+add-on's Services/Serve feature is tailnet-only, but some flows — notably an
+Enable Banking (or other PSD2 AIS) consent redirect — may need a genuinely
+public HTTPS callback URL. Funnel provides that; plain tailnet-only Serve
+does not.
+
+If you don't need public exposure, you likely don't need this at all — a
+separate standalone Tailscale add-on's Services config already gets you
+private, certificate-backed HTTPS to this add-on without any of the above.
+To stop using the embedded Tailscale later: either set `tailscale_funnel` to
+`false` (stays joined to the tailnet, drops the public exposure) or clear
+`tailscale_auth_key` entirely (disables this block completely) — both are
+config-only changes, no rebuild needed.
 
 ## Data & backups
 

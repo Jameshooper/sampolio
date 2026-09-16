@@ -31,6 +31,8 @@ if [ -f "$OPTIONS_FILE" ]; then
   ENABLE_BANKING_REDIRECT_URL="${ENABLE_BANKING_REDIRECT_URL:-$(get_option enable_banking_redirect_url)}"
   ENABLE_BANKING_PRIVATE_KEY="${ENABLE_BANKING_PRIVATE_KEY:-$(get_option enable_banking_private_key)}"
   HA_WEBHOOK_URL="${HA_WEBHOOK_URL:-$(get_option ha_webhook_url)}"
+  TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-$(get_option tailscale_auth_key)}"
+  TAILSCALE_FUNNEL="${TAILSCALE_FUNNEL:-$(get_option tailscale_funnel)}"
 fi
 
 if [ -z "${AUTH_SECRET:-}" ] || [ -z "${ENCRYPTION_KEY:-}" ] || [ -z "${AUTH_URL:-}" ]; then
@@ -64,4 +66,35 @@ if [ -n "${HA_WEBHOOK_URL:-}" ]; then
 fi
 
 PORT="${PORT:-3999}"
+
+# Optional embedded Tailscale — only runs when tailscale_auth_key is set.
+# Joins this container as its own tailnet device (separate from any
+# standalone Tailscale add-on), state persisted under /data so it doesn't
+# need re-approval on every restart. tailscale_funnel additionally exposes
+# $PORT to the public internet via Tailscale Funnel — off by default; clear
+# tailscale_auth_key entirely to disable this whole block and fall back to
+# whatever Tailscale connectivity is set up separately (e.g. a standalone
+# Tailscale add-on's Services config).
+if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
+  mkdir -p /data/tailscale /var/run/tailscale
+  tailscaled \
+    --state=/data/tailscale/tailscaled.state \
+    --socket=/var/run/tailscale/tailscaled.sock \
+    >/data/tailscale/tailscaled.log 2>&1 &
+
+  for i in $(seq 1 30); do
+    [ -S /var/run/tailscale/tailscaled.sock ] && break
+    sleep 1
+  done
+
+  tailscale --socket=/var/run/tailscale/tailscaled.sock up \
+    --authkey="$TAILSCALE_AUTHKEY" \
+    --hostname=sampolio \
+    --accept-dns=false
+
+  if [ "${TAILSCALE_FUNNEL:-}" = "true" ]; then
+    tailscale --socket=/var/run/tailscale/tailscaled.sock funnel --bg "$PORT"
+  fi
+fi
+
 exec node node_modules/next/dist/bin/next start -p "$PORT" -H 0.0.0.0

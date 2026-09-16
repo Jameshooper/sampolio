@@ -267,6 +267,15 @@ add this repo's URL). Full install steps and the option reference are in
 - This is unrelated to `HA_WEBHOOK_URL` (§9), which is Sampolio *sending*
   Split activity notifications to Home Assistant, not Home Assistant running
   Sampolio.
+- Two optional add-on options, `tailscale_auth_key` and `tailscale_funnel`,
+  run an embedded `tailscaled` inside the add-on's own container (state in
+  `/data/tailscale`) and optionally expose it to the public internet via
+  Tailscale Funnel — see `DOCS.md` "Embedded Tailscale". This exists for
+  cases with no reverse proxy/tunnel at all, where a PSD2 consent redirect
+  (Enable Banking) needs a genuinely public callback URL; a tailnet-only
+  Tailscale Services/Serve setup (a separate, standalone Tailscale add-on)
+  isn't enough for that specific case. Off by default; needs `NET_ADMIN`/
+  `NET_RAW` + `/dev/net/tun` only when `tailscale_auth_key` is set.
 - The Dockerfile sets `DISABLE_TLS_HEADERS=true`, which makes `next.config.ts`
   drop `Strict-Transport-Security` and the CSP's `upgrade-insecure-requests`.
   Both assume a TLS-terminating proxy in front (true for §1–§11's launchd +
