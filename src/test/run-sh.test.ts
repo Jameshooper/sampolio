@@ -283,10 +283,20 @@ describe('run.sh embedded Tailscale', () => {
     expect(res.stubLog).toContain('--hostname=sampolio-callback');
   });
 
-  it('does not enable Funnel unless the funnel option is on', async () => {
+  it('does not publish anything unless the funnel option is on', async () => {
     const res = await runEntrypoint({ ...REQUIRED, tailscale_auth_key: 'tskey-auth-test' });
-    expect(res.stubLog).not.toContain('funnel');
-    expect(res.stubLog).not.toContain('serve');
+    expect(res.stubLog).not.toContain('--set-path');
+    expect(res.stubLog).not.toContain('443 on');
+  });
+
+  it('actively tears Funnel down when the option is off', async () => {
+    // Skipping the enable is not enough: `serve --bg` and `funnel` persist in
+    // tailscaled's state file, and that state deliberately survives restarts.
+    // Without an explicit teardown, turning the option off would leave the
+    // callback published to the public internet with no sign of it.
+    const res = await runEntrypoint({ ...REQUIRED, tailscale_auth_key: 'tskey-auth-test' });
+    expect(res.stubLog).toContain('funnel 443 off');
+    expect(res.stubLog).toContain('serve reset');
   });
 
   it('publishes only the bank callback path when Funnel is on', async () => {
@@ -303,12 +313,13 @@ describe('run.sh embedded Tailscale', () => {
     expect(res.stubLog).not.toMatch(/serve --bg (?!--set-path)/);
   });
 
-  it('treats a non-true funnel value as off', async () => {
+  it('treats a non-true funnel value as off, and tears down', async () => {
     const res = await runEntrypoint({
       ...REQUIRED,
       tailscale_auth_key: 'tskey-auth-test',
       tailscale_funnel: false,
     });
-    expect(res.stubLog).not.toContain('funnel');
+    expect(res.stubLog).not.toContain('443 on');
+    expect(res.stubLog).toContain('funnel 443 off');
   });
 });

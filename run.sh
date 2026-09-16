@@ -129,6 +129,15 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
     tailscale --socket="$TAILSCALE_SOCKET" serve --bg \
       --set-path=/api/bank/callback "http://127.0.0.1:$PORT/api/bank/callback"
     tailscale --socket="$TAILSCALE_SOCKET" funnel --bg 443 on
+  else
+    # Explicit teardown, not just "skip the enable". `serve --bg` and `funnel`
+    # persist their configuration in tailscaled's state file, and that state
+    # lives under /data precisely so it survives restarts — so turning the
+    # option off and restarting would otherwise leave the callback still
+    # published to the public internet, silently. Both are no-ops when nothing
+    # was ever enabled; neither may abort startup under `set -e`.
+    tailscale --socket="$TAILSCALE_SOCKET" funnel 443 off 2>/dev/null || true
+    tailscale --socket="$TAILSCALE_SOCKET" serve reset 2>/dev/null || true
   fi
 fi
 

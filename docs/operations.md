@@ -313,6 +313,14 @@ add this repo's URL). Full install steps and the option reference are in
   Tailscale Funnel (`tailscale serve --set-path=/api/bank/callback` +
   `funnel 443 on`; nothing else is mapped, so the rest of the app stays
   tailnet-only even while Funnel is on) — see `DOCS.md` "Embedded Tailscale".
+  Turning `tailscale_funnel` off does not merely skip the enable: `run.sh`
+  runs `funnel 443 off` + `serve reset` on the next start, because both
+  persist in tailscaled's state file and that state deliberately survives
+  restarts — without the teardown the callback would stay published with no
+  sign of it. Verify with `tailscale funnel status` after restarting.
+  The Funnel path targets `127.0.0.1:$PORT` inside the container and never
+  passes through Ingress, so it is unaffected by whether `config.yaml` uses
+  `ingress:` or a published `ports:` entry.
   This exists for cases with no reverse proxy/tunnel at all, where a PSD2
   consent redirect (Enable Banking) needs a genuinely public callback URL; a
   tailnet-only Tailscale Services/Serve setup (a separate, standalone
