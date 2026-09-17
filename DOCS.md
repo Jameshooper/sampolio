@@ -37,7 +37,7 @@ installs of the same app.
 | `enable_banking_private_key` | No | The RS256 PKCS#8 PEM contents (not a file path) for the Enable Banking application. Written to `/data/sampolio/enable_banking_private_key.pem` (mode `0600`) inside the add-on's persistent storage at startup. |
 | `ha_webhook_url` | No | A Home Assistant webhook URL (`.../api/webhook/<id>`) that Sampolio's own Split feature POSTs shared-expense activity to — see `docs/features.md` "Home Assistant notifications". This is unrelated to installing the add-on itself; it lets Sampolio *notify* Home Assistant. |
 | `tailscale_auth_key` | No | An auth key from your Tailscale admin console (Settings → Keys). Joins this add-on's own container as a separate tailnet device (distinct from any standalone Tailscale add-on), so it needs its own approval on first connect if your tailnet requires it. Leave blank to disable — the add-on has no Tailscale of its own by default. See "Embedded Tailscale" below. |
-| `tailscale_funnel` | No | `true`/`false`, only meaningful when `tailscale_auth_key` is set. Exposes **only `/api/bank/callback`** to the public internet via Tailscale Funnel — nothing else on the app (not the login page, not any other route). Off by default. |
+| `tailscale_funnel` | No | `true`/`false`, only meaningful when `tailscale_auth_key` is set. Two exposures, both needed for the bank flow: **publicly**, via Tailscale Funnel, only `/api/bank/callback` — no other route, not the login page; and **to your tailnet**, on port 8443 of the same hostname, the **whole app**, because the callback needs a session cookie set on that hostname (see "Embedded Tailscale"). Everyone on your tailnet can therefore reach Sampolio's login while this is on. Off by default; turn it back off once the bank is linked. |
 
 Options marked required are enforced at container startup: the add-on exits
 immediately with a clear error if any are missing, rather than falling back
@@ -66,11 +66,13 @@ This exists specifically for `tailscale_funnel`: a **standalone** Tailscale
 add-on's Services/Serve feature is tailnet-only, but some flows — notably an
 Enable Banking (or other PSD2 AIS) consent redirect — may need a genuinely
 public HTTPS callback URL. Funnel provides that; plain tailnet-only Serve
-does not. `run.sh` scopes it to `tailscale serve --set-path=/api/bank/callback`
-plus `tailscale funnel 443 on` — Funnel publishes whatever `serve` already
-exposes on that port, and nothing else is mapped, so the login page and
-every other route stay unreachable from outside the tailnet even while
-Funnel is on. **Disable self-signup** (Settings → Admin, in the app) before
+does not. `run.sh` maps exactly one path on the public port —
+`tailscale funnel --set-path=/api/bank/callback` — and that single mapping is
+what limits the exposure: Tailscale cannot mix tailnet-only Serve and public
+Funnel on one port (the last command to configure a port wins), so enabling
+Funnel makes the whole port public and only this one path has anything
+behind it. `AllowFunnel` is keyed per host **and port**, which is why the
+whole-app mount on `:8443` stays tailnet-only. **Disable self-signup** (Settings → Admin, in the app) before
 ever enabling this — Funnel's hostname becomes publicly discoverable via
 Certificate Transparency logs the moment its cert is issued, regardless of
 whether anyone guesses it.
@@ -132,6 +134,10 @@ financial data.** There is no Home Assistant session check in front of it. So:
 - Do **not** port-forward 3999 or otherwise expose it to the internet.
 - Keep the HTTPS front door tailnet-only.
 - Use a strong, unique password for your Sampolio account.
+- **Turn off self-signup** (Settings → Admin, in the app) as soon as your own
+  account exists. It defaults to **on** so that the first account can be
+  created, which means that until you turn it off, anything that can reach
+  this port can register itself an account.
 
 The one deliberate public exception is the scoped Tailscale Funnel path
 (`tailscale_funnel`), which publishes only `/api/bank/callback` — not a

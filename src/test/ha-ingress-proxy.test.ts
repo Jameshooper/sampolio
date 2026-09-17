@@ -307,17 +307,27 @@ describe('proxy request/response handling (integration)', () => {
     expect(Buffer.from(res.body, 'binary').length).toBeGreaterThan(0);
   });
 
-  it('keeps Supervisor-supplied X-Forwarded-For on ingress requests', async () => {
-    await get('/page', { 'x-ingress-path': PREFIX, 'x-forwarded-for': '203.0.113.9' });
-    expect(lastUpstreamHeaders['x-forwarded-for']).toBe('203.0.113.9');
-  });
-
-  it('replaces caller-supplied forwarding headers off the ingress path', async () => {
-    // src/proxy.ts keys rate limiting on X-Forwarded-For's first entry, so a
-    // spoofable value would let a caller reset its own auth-attempt budget.
+  it('replaces caller-supplied forwarding headers', async () => {
+    // src/proxy.ts keys rate limiting on X-Forwarded-For's first entry, and
+    // the bank client sends it on as the PSD2 PSU-IP attribute, so a
+    // spoofable value is a forged client identity.
     await get('/page', { 'x-forwarded-for': '203.0.113.9', 'x-forwarded-host': 'evil.example' });
     expect(lastUpstreamHeaders['x-forwarded-for']).toBe('127.0.0.1');
     expect(lastUpstreamHeaders['x-forwarded-host']).toBeUndefined();
+  });
+
+  it('cannot be tricked out of sanitising by a forged X-Ingress-Path', async () => {
+    // The sanitisation used to be skipped whenever this header was present,
+    // on the premise that only Supervisor sends it. Nothing legitimate sends
+    // it now, and the port is directly reachable, so that premise made the
+    // whole control one forged header away from off.
+    await get('/page', { 'x-ingress-path': PREFIX, 'x-forwarded-for': '203.0.113.9' });
+    expect(lastUpstreamHeaders['x-forwarded-for']).toBe('127.0.0.1');
+  });
+
+  it('never forwards the ingress header upstream', async () => {
+    await get('/page', { 'x-ingress-path': PREFIX });
+    expect(lastUpstreamHeaders['x-ingress-path']).toBeUndefined();
   });
 
   it('strips accept-encoding so rewriting never sees gzip', async () => {

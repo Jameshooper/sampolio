@@ -126,6 +126,12 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
   # proxy passes non-ingress requests straight through unmodified, so this
   # behaves identically to hitting Next.js itself.
   if [ "${TAILSCALE_FUNNEL:-}" = "true" ]; then
+    # Start from a clean slate. Serve/funnel config persists in tailscaled's
+    # state file, so without this an older, wider mount from a previous
+    # version of this add-on would survive underneath the scoped mounts below
+    # instead of being replaced by them.
+    tailscale --socket="$TAILSCALE_SOCKET" serve reset 2>/dev/null || true
+
     # Public, port 443, exactly one path: the bank's PSD2 consent redirect.
     # Funnel makes the whole PORT public — Tailscale cannot mix tailnet-only
     # Serve and public Funnel on one port, the last command to configure it

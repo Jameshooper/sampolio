@@ -322,9 +322,15 @@ add this repo's URL). Full install steps and the option reference are in
   `/data/tailscale`, joins as device `sampolio-callback` — deliberately
   distinct from the standalone add-on's `svc:sampolio` Service) and
   optionally expose **only `/api/bank/callback`** to the public internet via
-  Tailscale Funnel (`tailscale serve --set-path=/api/bank/callback` +
-  `funnel 443 on`; nothing else is mapped, so the rest of the app stays
-  tailnet-only even while Funnel is on) — see `DOCS.md` "Embedded Tailscale".
+  `tailscale funnel --set-path=/api/bank/callback`. Serve and Funnel cannot
+  share a port — the last command to configure one wins — so enabling Funnel
+  makes the whole port public and the exposure is bounded by that being the
+  only path with a backend. The **whole app** is also mounted tailnet-only on
+  `:8443` of the same hostname, which the bank flow needs (the callback
+  requires a session cookie, and cookies are host-scoped); `AllowFunnel` is
+  keyed per host *and port*, so `:8443` is not promoted to public. Everyone
+  on the tailnet can reach the app's login while the option is on — see
+  `DOCS.md` "Embedded Tailscale".
   Turning `tailscale_funnel` off does not merely skip the enable: `run.sh`
   runs `funnel 443 off` + `serve reset` on the next start, because both
   persist in tailscaled's state file and that state deliberately survives

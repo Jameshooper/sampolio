@@ -198,13 +198,21 @@ export function createProxyServer({ upstreamPort = UPSTREAM_PORT } = {}) {
     // those, they hold the real client IP. Anything else reached this port
     // outside Ingress (the Funnel-published callback path, or another
     // container on the add-on network) and does not get to name its own IP.
-    if (!ingressPrefix) {
-      delete headers['x-forwarded-host'];
-      delete headers['x-forwarded-proto'];
-      const peer = req.socket.remoteAddress;
-      if (peer) headers['x-forwarded-for'] = peer;
-      else delete headers['x-forwarded-for'];
-    }
+    // Unconditionally, and never keyed on X-Ingress-Path. An earlier version
+    // kept the caller's forwarding headers when that header was present, on
+    // the theory that only Supervisor sends it. The add-on no longer uses
+    // Ingress, so nothing legitimate sends it at all — while the port is
+    // directly reachable, which made the whole sanitisation one forged
+    // `X-Ingress-Path: /x` away from being skipped. Trust here has to rest on
+    // the peer address, which a client cannot choose, not on a header it can.
+    delete headers['x-forwarded-host'];
+    delete headers['x-forwarded-proto'];
+    const peer = req.socket.remoteAddress;
+    if (peer) headers['x-forwarded-for'] = peer;
+    else delete headers['x-forwarded-for'];
+    // The app never reads this; only this proxy does. Don't pass a
+    // client-controlled value through to it.
+    delete headers['x-ingress-path'];
 
     const upstreamReq = http.request(
       { hostname: '127.0.0.1', port: upstreamPort, path: req.url, method: req.method, headers },
