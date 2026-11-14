@@ -29,6 +29,13 @@ panel_icon: mdi:cash-multiple
 map:
   - type: data
     read_only: false
+  # Read-only, and only for the Enable Banking signing key: a bank credential
+  # does not belong in an add-on option, where its value sits in plain text in
+  # options.json and is shown in the Configuration tab. /ssl is the
+  # conventional home for keys on a Home Assistant host and is shared with
+  # other add-ons, so nothing here may write to it.
+  - type: ssl
+    read_only: true
 # No `privileged:` and no `devices:` on purpose. The optional embedded
 # Tailscale (run.sh) runs tailscaled with --tun=userspace-networking, which
 # needs neither a TUN device nor NET_ADMIN/NET_RAW. Granting those would let
@@ -41,7 +48,7 @@ options:
   auth_url: ""
   enable_banking_app_id: ""
   enable_banking_redirect_url: ""
-  enable_banking_private_key: ""
+  enable_banking_private_key_file: "/ssl/sampolio-enable-banking.pem"
   ha_webhook_url: ""
   tailscale_auth_key: ""
   tailscale_funnel: false
@@ -57,7 +64,7 @@ schema:
   # app (src/lib/bank/*, src/lib/split-notify.ts) already treats a
   # missing/blank value as "feature disabled" on its own.
   enable_banking_redirect_url: str?
-  enable_banking_private_key: password?
+  enable_banking_private_key_file: str?
   ha_webhook_url: str?
   tailscale_auth_key: password?
   tailscale_funnel: bool

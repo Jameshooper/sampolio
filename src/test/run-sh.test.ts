@@ -227,43 +227,71 @@ describe('run.sh process topology', () => {
 });
 
 describe('run.sh Enable Banking key handling', () => {
-  it('writes a PEM that still parses as a signing key, 0600, in the app data dir', async () => {
-    // A real RSA PKCS#8 key, not a placeholder: the value crosses JSON, a
-    // shell command substitution (which strips trailing newlines) and printf
-    // on its way to disk, and the only thing that proves it survived intact
-    // is that crypto can still load it. A mangled key fails at bank-sync
-    // time with an opaque JWT error, far from the cause.
+  /** Write a real RSA PKCS#8 PEM to a scratch path, as /ssl would hold it. */
+  function writeKey(): { path: string; pem: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sampolio-ssl-'));
+    tmpDirs.push(dir);
     const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+    const keyPath = path.join(dir, 'sampolio-enable-banking.pem');
+    fs.writeFileSync(keyPath, pem, { mode: 0o600 });
+    return { path: keyPath, pem };
+  }
 
+  it('points the app at the key in place, without copying it', async () => {
+    // Copying it into the data directory would put a bank credential into
+    // every Home Assistant backup.
+    const key = writeKey();
     const res = await runEntrypoint({
       ...REQUIRED,
       enable_banking_app_id: 'app-id',
       enable_banking_redirect_url: 'https://example.com/api/bank/callback',
-      enable_banking_private_key: pem,
+      enable_banking_private_key_file: key.path,
     });
     expect(res.code).toBe(0);
-
-    const keyFile = path.join(res.dataDir, 'enable_banking_private_key.pem');
-    expect(fs.existsSync(keyFile)).toBe(true);
-
-    const written = fs.readFileSync(keyFile, 'utf8');
-    const reloaded = createPrivateKey(written);
-    expect(reloaded.export({ type: 'pkcs8', format: 'pem' })).toBe(pem);
-
-    // Readable by the app's own user and nobody else.
-    expect(fs.statSync(keyFile).mode & 0o777).toBe(0o600);
+    expect(fs.existsSync(path.join(res.dataDir, 'enable_banking_private_key.pem'))).toBe(false);
+    // Still loadable where it is, which is all the app needs.
+    expect(createPrivateKey(fs.readFileSync(key.path, 'utf8')).asymmetricKeyType).toBe('rsa');
   });
 
-  it('writes no key file when bank sync is not configured', async () => {
+  it('starts anyway, loudly, when the key path does not exist', async () => {
+    // Bank sync hard-disables itself without a key; the rest of the app
+    // should not be held hostage to a typo in a path.
+    const res = await runEntrypoint({
+      ...REQUIRED,
+      enable_banking_app_id: 'app-id',
+      enable_banking_redirect_url: 'https://example.com/api/bank/callback',
+      enable_banking_private_key_file: '/ssl/not-here.pem',
+    });
+    expect(res.code).toBe(0);
+    expect(res.stderr).toContain('no such file');
+    expect(res.stubLog).toContain('ha-ingress-proxy.mjs');
+  });
+
+  it('never writes a key file of its own', async () => {
     const res = await runEntrypoint(REQUIRED);
     expect(fs.existsSync(path.join(res.dataDir, 'enable_banking_private_key.pem'))).toBe(false);
   });
 
-  it('writes no key file when the bank options are only partly filled in', async () => {
-    // A half-configured bank setup must not look configured to the app.
-    const res = await runEntrypoint({ ...REQUIRED, enable_banking_app_id: 'app-id' });
-    expect(fs.existsSync(path.join(res.dataDir, 'enable_banking_private_key.pem'))).toBe(false);
+  it('tells the user to rotate a key left in the old inline option', async () => {
+    // It sat in options.json in plain text, so removing it is not enough.
+    const res = await runEntrypoint({ ...REQUIRED }, { ENABLE_BANKING_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----' });
+    expect(res.stderr).toContain('no longer used');
+    expect(res.stderr).toContain('treat it as exposed');
+  });
+
+  it('deletes a key an earlier version had copied into the data directory', async () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'sampolio-oldkey-'));
+    tmpDirs.push(scratch);
+    const dataDir = path.join(scratch, 'data');
+    fs.mkdirSync(dataDir, { recursive: true });
+    const stale = path.join(dataDir, 'enable_banking_private_key.pem');
+    fs.writeFileSync(stale, '-----BEGIN PRIVATE KEY-----\nstale\n-----END PRIVATE KEY-----\n');
+
+    const res = await runEntrypoint(REQUIRED, { DATA_DIR: dataDir });
+    expect(res.code).toBe(0);
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(res.stderr).toContain('removed the private key');
   });
 });
 

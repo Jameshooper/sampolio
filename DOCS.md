@@ -34,7 +34,7 @@ installs of the same app.
 | `auth_url` | **Yes** | A syntactically valid `https://` URL for NextAuth's own internal use. It doesn't need to exactly match whatever URL you're actually browsing through (a LAN IP, `homeassistant.local`, or a Tailscale hostname all reach the same port); `AUTH_TRUST_HOST=true` (set by `run.sh`) plus this app's own use of relative redirects makes that unnecessary. Any stable placeholder like `https://sampolio.local` works. |
 | `enable_banking_app_id` | No | Enable Banking (PSD2 AIS) application id. Leave all three `enable_banking_*` options blank to keep bank sync fully disabled (zero network calls) — see [`docs/bank-sync.md`](docs/bank-sync.md). |
 | `enable_banking_redirect_url` | No | Must be `<auth_url>/api/bank/callback` and publicly reachable if bank sync is enabled. |
-| `enable_banking_private_key` | No | The RS256 PKCS#8 PEM contents (not a file path) for the Enable Banking application. Written to `/data/sampolio/enable_banking_private_key.pem` (mode `0600`) inside the add-on's persistent storage at startup. |
+| `enable_banking_private_key_file` | No | **Path** to the RS256 PKCS#8 PEM — not its contents. Put the file in `/ssl` (mapped read-only into the add-on) and leave this at the default `/ssl/sampolio-enable-banking.pem`, or point it elsewhere under `/ssl`. The key is never copied, so it stays out of `options.json`, out of the Configuration tab and out of Home Assistant backups of the add-on's data. |
 | `ha_webhook_url` | No | A Home Assistant webhook URL (`.../api/webhook/<id>`) that Sampolio's own Split feature POSTs shared-expense activity to — see `docs/features.md` "Home Assistant notifications". This is unrelated to installing the add-on itself; it lets Sampolio *notify* Home Assistant. |
 | `tailscale_auth_key` | No | An auth key from your Tailscale admin console (Settings → Keys). Joins this add-on's own container as a separate tailnet device (distinct from any standalone Tailscale add-on), so it needs its own approval on first connect if your tailnet requires it. Leave blank to disable — the add-on has no Tailscale of its own by default. See "Embedded Tailscale" below. |
 | `tailscale_funnel` | No | `true`/`false`, only meaningful when `tailscale_auth_key` is set. Two exposures, both needed for the bank flow: **publicly**, via Tailscale Funnel, only `/api/bank/callback` — no other route, not the login page; and **to your tailnet**, on port 8443 of the same hostname, the **whole app**, because the callback needs a session cookie set on that hostname (see "Embedded Tailscale"). Everyone on your tailnet can therefore reach Sampolio's login while this is on. Off by default; turn it back off once the bank is linked. |
@@ -125,6 +125,26 @@ it says so.
 Each switch acts once. Leaving one on does not repeat it on the next restart —
 that is deliberate, so a forgotten `wipe_data` cannot destroy the data you just
 restored.
+
+## Moving the Enable Banking key out of the options
+
+Earlier versions took the PEM's **contents** as an add-on option. That value
+was written in plain text to `/data/options.json`, shown in the Configuration
+tab, and copied into the add-on's data directory — so it also landed in any
+Home Assistant backup. If you ever pasted a key there, treat it as exposed:
+issue a new one at enablebanking.com rather than reusing it.
+
+To set the new key up:
+
+1. Put the PEM on the Home Assistant host at `/ssl/sampolio-enable-banking.pem`
+   (the File editor, Samba or SSH add-ons all reach `/ssl`).
+2. Leave `enable_banking_private_key_file` at its default, or set it to
+   wherever under `/ssl` you put the file.
+3. Clear the old `enable_banking_private_key` option if your configuration
+   still has it. The add-on warns on every start until you do.
+
+On start the add-on also deletes any copy of the key that an earlier version
+left in its data directory.
 
 ## Data & backups
 

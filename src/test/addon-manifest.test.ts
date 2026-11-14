@@ -62,9 +62,24 @@ describe('add-on manifest', () => {
     for (const key of ['auth_secret', 'encryption_key']) {
       expect(configYaml).toMatch(new RegExp(`${key}:\\s*password\\b`));
     }
-    for (const key of ['enable_banking_private_key', 'tailscale_auth_key']) {
-      expect(configYaml).toMatch(new RegExp(`${key}:\\s*password\\?`));
-    }
+    expect(configYaml).toMatch(/tailscale_auth_key:\s*password\?/);
+  });
+
+  it('takes the bank signing key by path, never by value', () => {
+    // An option's value is stored in plain text in options.json, shown in the
+    // Configuration tab and swept into Home Assistant backups. That is the
+    // wrong home for the private half of a bank credential, so the key is
+    // referenced from /ssl instead of pasted in.
+    expect(configYaml).toMatch(/enable_banking_private_key_file:\s*str\?/);
+    expect(configYaml).not.toMatch(/^\s*enable_banking_private_key:/m);
+  });
+
+  it('maps /ssl read-only, and nothing else writable beyond its own data', () => {
+    expect(configYaml).toMatch(/- type: ssl\n\s+read_only: true/);
+    const writable = [...configYaml.matchAll(/- type: (\w+)\n\s+read_only: (\w+)/g)]
+      .filter((m) => m[2] === 'false')
+      .map((m) => m[1]);
+    expect(writable).toEqual(['data']);
   });
 });
 

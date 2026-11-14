@@ -31,7 +31,7 @@ if [ -f "$OPTIONS_FILE" ]; then
   AUTH_URL="${AUTH_URL:-$(get_option auth_url)}"
   ENABLE_BANKING_APP_ID="${ENABLE_BANKING_APP_ID:-$(get_option enable_banking_app_id)}"
   ENABLE_BANKING_REDIRECT_URL="${ENABLE_BANKING_REDIRECT_URL:-$(get_option enable_banking_redirect_url)}"
-  ENABLE_BANKING_PRIVATE_KEY="${ENABLE_BANKING_PRIVATE_KEY:-$(get_option enable_banking_private_key)}"
+  ENABLE_BANKING_PRIVATE_KEY_FILE="${ENABLE_BANKING_PRIVATE_KEY_FILE:-$(get_option enable_banking_private_key_file)}"
   HA_WEBHOOK_URL="${HA_WEBHOOK_URL:-$(get_option ha_webhook_url)}"
   TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-$(get_option tailscale_auth_key)}"
   TAILSCALE_FUNNEL="${TAILSCALE_FUNNEL:-$(get_option tailscale_funnel)}"
@@ -88,17 +88,40 @@ else
   export SAMPOLIO_RESET_ADMIN_PASSWORD=false
 fi
 
-if [ -n "${ENABLE_BANKING_APP_ID:-}" ] && [ -n "${ENABLE_BANKING_REDIRECT_URL:-}" ] && [ -n "${ENABLE_BANKING_PRIVATE_KEY:-}" ]; then
-  export ENABLE_BANKING_APP_ID
-  export ENABLE_BANKING_REDIRECT_URL
-  # Under $DATA_DIR, not bare /data, for the same reason as the data tree
-  # above: /data's top level belongs to Supervisor-managed files.
-  KEY_FILE="$DATA_DIR/enable_banking_private_key.pem"
-  # Trailing newline: the value arrives via command substitution above, which
-  # strips trailing newlines, and a PEM should end with one.
-  printf '%s\n' "$ENABLE_BANKING_PRIVATE_KEY" > "$KEY_FILE"
-  chmod 600 "$KEY_FILE"
-  export ENABLE_BANKING_PRIVATE_KEY_FILE="$KEY_FILE"
+# The Enable Banking signing key is referenced by PATH, never pasted into an
+# add-on option. An option's value is stored in plain text in
+# /data/options.json, is shown in the Configuration tab, and ends up in any
+# Home Assistant backup or screenshot of that page — for the private half of
+# a bank credential that is the wrong place. Put the PEM in /ssl (mapped
+# read-only below) and point this at it.
+if [ -n "${ENABLE_BANKING_APP_ID:-}" ] && [ -n "${ENABLE_BANKING_REDIRECT_URL:-}" ] && [ -n "${ENABLE_BANKING_PRIVATE_KEY_FILE:-}" ]; then
+  if [ ! -f "$ENABLE_BANKING_PRIVATE_KEY_FILE" ]; then
+    # Loud, and not fatal: the app hard-disables bank sync without the key, so
+    # the rest of Sampolio should still start.
+    echo "Sampolio: enable_banking_private_key_file is set to '$ENABLE_BANKING_PRIVATE_KEY_FILE' but no such file exists." >&2
+    echo "Sampolio: bank sync stays disabled. Copy the PEM into /ssl and check the path." >&2
+  elif [ ! -r "$ENABLE_BANKING_PRIVATE_KEY_FILE" ]; then
+    echo "Sampolio: '$ENABLE_BANKING_PRIVATE_KEY_FILE' exists but is not readable by the add-on. Bank sync stays disabled." >&2
+  else
+    export ENABLE_BANKING_APP_ID
+    export ENABLE_BANKING_REDIRECT_URL
+    export ENABLE_BANKING_PRIVATE_KEY_FILE
+  fi
+fi
+
+# A key pasted into the old inline option would still be sitting in
+# options.json. Say so — it needs rotating, not just removing.
+if [ -n "${ENABLE_BANKING_PRIVATE_KEY:-}" ]; then
+  echo "Sampolio: the enable_banking_private_key option is no longer used." >&2
+  echo "Sampolio: that key was stored in plain text in options.json — treat it as exposed, issue a new one at" >&2
+  echo "Sampolio: enablebanking.com, put the PEM in /ssl, and set enable_banking_private_key_file instead." >&2
+fi
+
+# Remove a PEM written to the data directory by an earlier version, so the
+# key does not linger in Home Assistant backups after the switch to /ssl.
+if [ -f "$DATA_DIR/enable_banking_private_key.pem" ]; then
+  rm -f "$DATA_DIR/enable_banking_private_key.pem"
+  echo "Sampolio: removed the private key an earlier version had copied into the data directory." >&2
 fi
 
 if [ -n "${HA_WEBHOOK_URL:-}" ]; then
