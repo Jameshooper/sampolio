@@ -267,6 +267,76 @@ describe('run.sh Enable Banking key handling', () => {
   });
 });
 
+describe('run.sh recovery switches', () => {
+  it('does nothing to the data directory by default', async () => {
+    const res = await runEntrypoint(REQUIRED);
+    expect(res.code).toBe(0);
+    expect(res.stderr).not.toContain('DELETING');
+  });
+
+  it('wipes the data directory once when wipe_data is on', async () => {
+    const res = await runEntrypoint({ ...REQUIRED, wipe_data: true });
+    expect(res.code).toBe(0);
+    expect(res.stderr).toContain('DELETING ALL APP DATA');
+    // The marker lives beside the data dir, not inside it — the wipe removes
+    // the tree, so a marker kept within it could never survive to stop a
+    // second wipe.
+    expect(fs.existsSync(path.join(path.dirname(res.dataDir), '.sampolio-wipe-done'))).toBe(true);
+  });
+
+  it('actually removes existing data, and leaves the directory usable', async () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'sampolio-wipe-'));
+    tmpDirs.push(scratch);
+    const dataDir = path.join(scratch, 'data');
+    fs.mkdirSync(path.join(dataDir, 'users', 'u1'), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'users', 'u1', 'user.enc'), 'ciphertext');
+
+    const res = await runEntrypoint({ ...REQUIRED, wipe_data: true }, { DATA_DIR: dataDir });
+    expect(res.code).toBe(0);
+    expect(fs.existsSync(path.join(dataDir, 'users'))).toBe(false);
+    expect(fs.existsSync(dataDir)).toBe(true);
+  });
+
+  it('refuses to wipe twice while the switch is left on', async () => {
+    // The whole point of the marker: a switch left on must not destroy the
+    // data again on the next restart.
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'sampolio-wipe2-'));
+    tmpDirs.push(scratch);
+    const dataDir = path.join(scratch, 'data');
+
+    const first = await runEntrypoint({ ...REQUIRED, wipe_data: true }, { DATA_DIR: dataDir });
+    expect(first.stderr).toContain('DELETING ALL APP DATA');
+
+    fs.mkdirSync(path.join(dataDir, 'users'), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'users', 'keep.enc'), 'precious');
+
+    const second = await runEntrypoint({ ...REQUIRED, wipe_data: true }, { DATA_DIR: dataDir });
+    expect(second.stderr).not.toContain('DELETING ALL APP DATA');
+    expect(second.stderr).toContain('already been performed');
+    expect(fs.existsSync(path.join(dataDir, 'users', 'keep.enc'))).toBe(true);
+  });
+
+  it('re-arms the wipe once the switch is turned off', async () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'sampolio-wipe3-'));
+    tmpDirs.push(scratch);
+    const dataDir = path.join(scratch, 'data');
+
+    await runEntrypoint({ ...REQUIRED, wipe_data: true }, { DATA_DIR: dataDir });
+    await runEntrypoint({ ...REQUIRED, wipe_data: false }, { DATA_DIR: dataDir });
+    expect(fs.existsSync(path.join(scratch, '.sampolio-wipe-done'))).toBe(false);
+
+    const again = await runEntrypoint({ ...REQUIRED, wipe_data: true }, { DATA_DIR: dataDir });
+    expect(again.stderr).toContain('DELETING ALL APP DATA');
+  });
+
+  it('passes the password-reset request to the app, not the shell', async () => {
+    // Hashing and encryption live in the app; run.sh only relays the request.
+    const on = await runEntrypoint({ ...REQUIRED, reset_admin_password: true });
+    expect(on.stubLog).toContain('ha-ingress-proxy.mjs');
+    expect(on.code).toBe(0);
+  });
+});
+
 describe('run.sh embedded Tailscale', () => {
   it('does not touch Tailscale when no auth key is set', async () => {
     const res = await runEntrypoint(REQUIRED);

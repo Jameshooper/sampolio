@@ -35,6 +35,8 @@ if [ -f "$OPTIONS_FILE" ]; then
   HA_WEBHOOK_URL="${HA_WEBHOOK_URL:-$(get_option ha_webhook_url)}"
   TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-$(get_option tailscale_auth_key)}"
   TAILSCALE_FUNNEL="${TAILSCALE_FUNNEL:-$(get_option tailscale_funnel)}"
+  RESET_ADMIN_PASSWORD="${RESET_ADMIN_PASSWORD:-$(get_option reset_admin_password)}"
+  WIPE_DATA="${WIPE_DATA:-$(get_option wipe_data)}"
 fi
 
 if [ -z "${AUTH_SECRET:-}" ] || [ -z "${ENCRYPTION_KEY:-}" ] || [ -z "${AUTH_URL:-}" ]; then
@@ -53,6 +55,38 @@ export AUTH_TRUST_HOST=true
 # Supervisor-managed files such as options.json.
 export DATA_DIR="${DATA_DIR:-/data/sampolio}"
 mkdir -p "$DATA_DIR"
+
+# One-shot maintenance, so a forgotten password never again means
+# uninstalling the add-on with "delete app data".
+#
+# Both are guarded by a marker kept OUTSIDE $DATA_DIR (the wipe deletes that
+# whole tree), so leaving the switch on cannot repeat the action on every
+# restart — a wipe that re-ran on each boot would destroy the data the user
+# just restored. Turning the option off clears the marker and re-arms it.
+WIPE_MARKER="$(dirname "$DATA_DIR")/.sampolio-wipe-done"
+if [ "${WIPE_DATA:-}" = "true" ]; then
+  if [ -e "$WIPE_MARKER" ]; then
+    echo "Sampolio: wipe_data is still switched on, but the wipe has already been performed." >&2
+    echo "Sampolio: set wipe_data back to false in the Configuration tab; it will not run again until you do." >&2
+  else
+    echo "Sampolio: wipe_data is set — DELETING ALL APP DATA in $DATA_DIR." >&2
+    rm -rf "${DATA_DIR:?refusing to wipe an empty path}"
+    mkdir -p "$DATA_DIR"
+    : > "$WIPE_MARKER"
+    echo "Sampolio: data wiped. Sign up at /auth/signup to create a new first account (it becomes admin)." >&2
+    echo "Sampolio: set wipe_data back to false now." >&2
+  fi
+else
+  rm -f "$WIPE_MARKER"
+fi
+
+# Read by the app at startup (src/lib/addon-maintenance.ts), which has the
+# encryption and password hashing this cannot do from the shell.
+if [ "${RESET_ADMIN_PASSWORD:-}" = "true" ]; then
+  export SAMPOLIO_RESET_ADMIN_PASSWORD=true
+else
+  export SAMPOLIO_RESET_ADMIN_PASSWORD=false
+fi
 
 if [ -n "${ENABLE_BANKING_APP_ID:-}" ] && [ -n "${ENABLE_BANKING_REDIRECT_URL:-}" ] && [ -n "${ENABLE_BANKING_PRIVATE_KEY:-}" ]; then
   export ENABLE_BANKING_APP_ID

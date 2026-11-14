@@ -38,6 +38,8 @@ installs of the same app.
 | `ha_webhook_url` | No | A Home Assistant webhook URL (`.../api/webhook/<id>`) that Sampolio's own Split feature POSTs shared-expense activity to — see `docs/features.md` "Home Assistant notifications". This is unrelated to installing the add-on itself; it lets Sampolio *notify* Home Assistant. |
 | `tailscale_auth_key` | No | An auth key from your Tailscale admin console (Settings → Keys). Joins this add-on's own container as a separate tailnet device (distinct from any standalone Tailscale add-on), so it needs its own approval on first connect if your tailnet requires it. Leave blank to disable — the add-on has no Tailscale of its own by default. See "Embedded Tailscale" below. |
 | `tailscale_funnel` | No | `true`/`false`, only meaningful when `tailscale_auth_key` is set. Two exposures, both needed for the bank flow: **publicly**, via Tailscale Funnel, only `/api/bank/callback` — no other route, not the login page; and **to your tailnet**, on port 8443 of the same hostname, the **whole app**, because the callback needs a session cookie set on that hostname (see "Embedded Tailscale"). Everyone on your tailnet can therefore reach Sampolio's login while this is on. Off by default; turn it back off once the bank is linked. |
+| `reset_admin_password` | No | A recovery switch, not a password field. Turn it on and restart: the add-on generates a new password for the admin account, prints it **once** in the add-on log, and will not do it again until you turn the switch off. Nothing is stored in `options.json`. Use this instead of reinstalling when you cannot sign in. |
+| `wipe_data` | No | Deletes **all** Sampolio data (`/data/sampolio`) on the next start, then refuses to repeat until you switch it off again. Sign up afterwards — the first account becomes the admin. Irreversible: take a Home Assistant backup first. |
 
 Options marked required are enforced at container startup: the add-on exits
 immediately with a clear error if any are missing, rather than falling back
@@ -101,6 +103,28 @@ To stop using the embedded Tailscale later: either set `tailscale_funnel` to
 `false` (stays joined to the tailnet, drops the public exposure) or clear
 `tailscale_auth_key` entirely (disables this block completely) — both are
 config-only changes, no rebuild needed.
+
+## If you cannot sign in
+
+Nothing here needs a reinstall, and none of it touches your data except where
+it says so.
+
+1. **Locked out after too many attempts.** The lockout is held in memory, so
+   simply restarting the add-on clears it. No option needed.
+2. **Forgotten password.** Set `reset_admin_password` to `true`, restart, and
+   read the new password from the add-on **Log** tab — it is printed once, in
+   a boxed banner. Sign in with it, change it in Settings → Account, then set
+   the switch back to `false`.
+3. **Sign-in appears to do nothing.** You are almost certainly opening the app
+   over plain `http://` on something other than `localhost`; see "Access".
+   The sign-in page now tells you so explicitly rather than silently bouncing.
+4. **Start completely fresh.** Set `wipe_data` to `true` and restart. This
+   deletes every account and all financial data, then re-arms only after you
+   set it back to `false`.
+
+Each switch acts once. Leaving one on does not repeat it on the next restart —
+that is deliberate, so a forgotten `wipe_data` cannot destroy the data you just
+restored.
 
 ## Data & backups
 

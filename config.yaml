@@ -45,6 +45,8 @@ options:
   ha_webhook_url: ""
   tailscale_auth_key: ""
   tailscale_funnel: false
+  reset_admin_password: false
+  wipe_data: false
 schema:
   auth_secret: password
   encryption_key: password
@@ -59,3 +61,10 @@ schema:
   ha_webhook_url: str?
   tailscale_auth_key: password?
   tailscale_funnel: bool
+  # Recovery switches. Both act once and then refuse to repeat until switched
+  # off again, so leaving one on cannot wipe the data on every restart.
+  # reset_admin_password generates a new password and prints it to the add-on
+  # log once — it is not an input field, so no password is ever stored in
+  # options.json or shown in the Configuration tab.
+  reset_admin_password: bool
+  wipe_data: bool
