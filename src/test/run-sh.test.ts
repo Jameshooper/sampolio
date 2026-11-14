@@ -406,9 +406,13 @@ describe('run.sh embedded Tailscale', () => {
       tailscale_auth_key: 'tskey-auth-test',
       tailscale_funnel: true,
     });
-    const funnelLines = res.stubLog.split('\n').filter((l) => l.includes('funnel'));
-    expect(funnelLines.length).toBeGreaterThan(0);
-    for (const line of funnelLines) expect(line).toContain('--set-path=/api/bank/callback');
+    // Teardown lines ("funnel 443 off") are not publishing; every line that
+    // actually publishes must name the one allowed path.
+    const publishing = res.stubLog
+      .split('\n')
+      .filter((l) => l.includes('funnel') && !l.includes('443 off'));
+    expect(publishing.length).toBeGreaterThan(0);
+    for (const line of publishing) expect(line).toContain('--set-path=/api/bank/callback');
   });
 
   it('serves the whole app tailnet-only on a second port for the bank flow', async () => {
@@ -423,6 +427,35 @@ describe('run.sh embedded Tailscale', () => {
     expect(res.stubLog).toMatch(/serve --bg --https=8443/);
     // Whole-app mapping must never be the thing handed to funnel.
     expect(res.stubLog).not.toMatch(/funnel[^\n]*--https=8443/);
+  });
+
+  it('serves the whole app on the tailnet by default when a key is set', async () => {
+    // This is what makes the published port unnecessary, so it must not
+    // depend on Funnel being on.
+    const res = await runEntrypoint({ ...REQUIRED, tailscale_auth_key: 'tskey-auth-test' });
+    expect(res.stubLog).toMatch(/serve --bg --https=8443/);
+    expect(res.stubLog).not.toMatch(/funnel --bg/);
+  });
+
+  it('can be told not to serve the app at all', async () => {
+    const res = await runEntrypoint({
+      ...REQUIRED,
+      tailscale_auth_key: 'tskey-auth-test',
+      tailscale_serve: false,
+    });
+    expect(res.stubLog).not.toMatch(/serve --bg --https=8443/);
+  });
+
+  it('warns when Funnel is on without Serve, which breaks the bank callback', async () => {
+    // The callback needs a session cookie set on the same hostname; without
+    // the :8443 mount there is no way to obtain one.
+    const res = await runEntrypoint({
+      ...REQUIRED,
+      tailscale_auth_key: 'tskey-auth-test',
+      tailscale_serve: false,
+      tailscale_funnel: true,
+    });
+    expect(res.stderr).toContain('tailscale_serve is off');
   });
 
   it('treats a non-true funnel value as off, and tears down', async () => {

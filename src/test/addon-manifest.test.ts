@@ -92,12 +92,6 @@ describe('add-on manifest security posture', () => {
     expect(configYaml).not.toMatch(/^ingress:\s*true/m);
   });
 
-  it('warns in ports_description that nothing authenticates in front', () => {
-    // On this port Sampolio's own login is the only gate. That has to be
-    // visible where the port is exposed, not only in the docs.
-    const desc = configYaml.match(/^ports_description:\n\s+3999\/tcp:\s*(.+)$/m)?.[1] ?? '';
-    expect(desc.toLowerCase()).toContain('no home assistant auth');
-  });
 
   it('requests no container privileges or device access', () => {
     // tailscaled runs with --tun=userspace-networking precisely so that
@@ -109,14 +103,20 @@ describe('add-on manifest security posture', () => {
     expect(configYaml).not.toMatch(/^host_network:\s*true/m);
   });
 
-  it('publishes the same port run.sh gives the proxy', () => {
-    // A mismatch publishes a port nothing listens on, and leaves the real one
-    // reachable or not depending on Docker's defaults rather than on intent.
-    const published = configYaml.match(/^ports:\n\s+(\d+)\/tcp:\s*(\d+)/m);
+  it('offers the same container port run.sh listens on, unpublished', () => {
+    // Offering a port nothing listens on would make the Network section a
+    // dead end; publishing one by default would expose an unauthenticated
+    // app without anyone choosing to.
+    const entry = configYaml.match(/^ports:\n\s+(\d+)\/tcp:\s*(\S+)/m);
     const runSh = fs.readFileSync(path.join(REPO_ROOT, 'run.sh'), 'utf8');
     const defaultPort = runSh.match(/^PORT="\$\{PORT:-(\d+)\}"/m)?.[1];
-    expect(published?.[1]).toBe(defaultPort);
-    expect(published?.[2]).toBe(defaultPort);
+    expect(entry?.[1]).toBe(defaultPort);
+    expect(entry?.[2]).toBe('null');
+  });
+
+  it('warns in ports_description that publishing it removes the auth gate', () => {
+    const desc = configYaml.match(/^ports_description:\n\s+\d+\/tcp:\s*(.+)$/m)?.[1] ?? '';
+    expect(desc.toLowerCase()).toContain('no home assistant auth');
   });
 });
 

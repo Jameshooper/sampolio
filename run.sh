@@ -34,6 +34,7 @@ if [ -f "$OPTIONS_FILE" ]; then
   ENABLE_BANKING_PRIVATE_KEY_FILE="${ENABLE_BANKING_PRIVATE_KEY_FILE:-$(get_option enable_banking_private_key_file)}"
   HA_WEBHOOK_URL="${HA_WEBHOOK_URL:-$(get_option ha_webhook_url)}"
   TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-$(get_option tailscale_auth_key)}"
+  TAILSCALE_SERVE="${TAILSCALE_SERVE:-$(get_option tailscale_serve)}"
   TAILSCALE_FUNNEL="${TAILSCALE_FUNNEL:-$(get_option tailscale_funnel)}"
   RESET_ADMIN_PASSWORD="${RESET_ADMIN_PASSWORD:-$(get_option reset_admin_password)}"
   WIPE_DATA="${WIPE_DATA:-$(get_option wipe_data)}"
@@ -174,50 +175,43 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
     --hostname=sampolio-callback \
     --accept-dns=false
 
-  # tailscale_funnel exposes ONLY /api/bank/callback to the public internet
-  # — never the whole app. `serve --set-path` maps just that one route on
-  # port 443; `funnel 443 on` then promotes whatever `serve` already exposes
-  # on that port, so anything not explicitly mapped (the login page, every
-  # other route) stays unreachable from outside the tailnet. Off by default.
-  # Targets $PORT (the ingress-proxy below), not Next.js directly — the
-  # proxy passes non-ingress requests straight through unmodified, so this
-  # behaves identically to hitting Next.js itself.
-  if [ "${TAILSCALE_FUNNEL:-}" = "true" ]; then
-    # Start from a clean slate. Serve/funnel config persists in tailscaled's
-    # state file, so without this an older, wider mount from a previous
-    # version of this add-on would survive underneath the scoped mounts below
-    # instead of being replaced by them.
-    tailscale --socket="$TAILSCALE_SOCKET" serve reset 2>/dev/null || true
+  # Serve and Funnel are configured from scratch on every start. Both persist
+  # in tailscaled's state file, and that state lives under /data so it
+  # survives restarts — so "stop setting it" is not the same as "turn it off",
+  # and an older or wider mount left by a previous version would otherwise
+  # survive underneath whatever is set below.
+  tailscale --socket="$TAILSCALE_SOCKET" serve reset 2>/dev/null || true
+  tailscale --socket="$TAILSCALE_SOCKET" funnel 443 off 2>/dev/null || true
 
-    # Public, port 443, exactly one path: the bank's PSD2 consent redirect.
-    # Funnel makes the whole PORT public — Tailscale cannot mix tailnet-only
-    # Serve and public Funnel on one port, the last command to configure it
-    # wins — so the scoping comes from mapping only this single path. Nothing
-    # else on :443 has a backend to reach.
-    tailscale --socket="$TAILSCALE_SOCKET" funnel --bg \
-      --set-path=/api/bank/callback "http://127.0.0.1:$PORT/api/bank/callback"
-
-    # Tailnet-only, port 8443, the whole app — and this is load-bearing for
-    # the bank flow, not a convenience. /api/bank/callback requires an
-    # authenticated session, and the session cookie is host-only, so it is
-    # sent to the callback only if it was set on THIS hostname. Browsing the
-    # app anywhere else (a LAN IP, a different tailnet hostname) means the
-    # bank's redirect arrives with no cookie, the callback bounces to
-    # sign-in, and the single-use code and state are burnt with the
-    # connection never completed. Cookies ignore the port number
-    # (RFC 6265 §5.1.3), so a session established here on :8443 is sent with
-    # the bank's redirect to :443 above.
+  # tailscale_serve: the whole app on :8443, reachable from your tailnet only.
+  # This is the recommended way in, and it is what makes the published port
+  # unnecessary. It is HTTPS with a real certificate, which also means the
+  # session cookie keeps its Secure attribute — over plain http:// on a LAN
+  # address the browser discards it and sign-in silently never sticks.
+  if [ "${TAILSCALE_SERVE:-true}" = "true" ]; then
     tailscale --socket="$TAILSCALE_SOCKET" serve --bg --https=8443 \
       "http://127.0.0.1:$PORT"
-  else
-    # Explicit teardown, not just "skip the enable". `serve --bg` and `funnel`
-    # persist their configuration in tailscaled's state file, and that state
-    # lives under /data precisely so it survives restarts — so turning the
-    # option off and restarting would otherwise leave the callback still
-    # published to the public internet, silently. Both are no-ops when nothing
-    # was ever enabled; neither may abort startup under `set -e`.
-    tailscale --socket="$TAILSCALE_SOCKET" funnel 443 off 2>/dev/null || true
-    tailscale --socket="$TAILSCALE_SOCKET" serve reset 2>/dev/null || true
+  fi
+
+  # tailscale_funnel: ONE path on :443, reachable from the public internet —
+  # the bank's PSD2 consent redirect, which has to land from outside the
+  # tailnet. Funnel makes the whole PORT public (Tailscale cannot mix
+  # tailnet-only Serve and public Funnel on one port), so the scoping comes
+  # from this being the only path with a backend behind it. AllowFunnel is
+  # keyed per host AND port, so the :8443 mount above is not promoted.
+  #
+  # Serving the app on :8443 is load-bearing for this flow, not a
+  # convenience: the callback needs an authenticated session, and the session
+  # cookie is host-only, so it reaches the callback only if it was set on this
+  # same hostname. Cookies ignore the port (RFC 6265 §5.1.3), so a session
+  # established on :8443 is sent with the bank's redirect to :443.
+  if [ "${TAILSCALE_FUNNEL:-}" = "true" ]; then
+    if [ "${TAILSCALE_SERVE:-true}" != "true" ]; then
+      echo "Sampolio: tailscale_funnel is on but tailscale_serve is off." >&2
+      echo "Sampolio: the bank callback needs a session cookie set on the same hostname, so link your bank with both on." >&2
+    fi
+    tailscale --socket="$TAILSCALE_SOCKET" funnel --bg \
+      --set-path=/api/bank/callback "http://127.0.0.1:$PORT/api/bank/callback"
   fi
 fi
 

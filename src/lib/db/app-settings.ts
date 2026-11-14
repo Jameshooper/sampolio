@@ -16,7 +16,13 @@ async function getAppSettingsPath(): Promise<string> {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  selfSignupEnabled: true, // Default to enabled for first-time setup
+  // Closed by default. First-time setup is unaffected: signUp() always allows
+  // the very first account regardless of this flag, and that account becomes
+  // the admin — so the only thing this default changes is whether a *second*,
+  // uninvited account can be created before anyone has thought about it. That
+  // matters on the Home Assistant add-on, where the app may be published on a
+  // port with no Home Assistant login in front of it.
+  selfSignupEnabled: false,
   updatedAt: new Date().toISOString(),
   updatedBy: 'system',
 };

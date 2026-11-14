@@ -37,6 +37,7 @@ installs of the same app.
 | `enable_banking_private_key_file` | No | **Path** to the RS256 PKCS#8 PEM — not its contents. Put the file in `/ssl` (mapped read-only into the add-on) and leave this at the default `/ssl/sampolio-enable-banking.pem`, or point it elsewhere under `/ssl`. The key is never copied, so it stays out of `options.json`, out of the Configuration tab and out of Home Assistant backups of the add-on's data. |
 | `ha_webhook_url` | No | A Home Assistant webhook URL (`.../api/webhook/<id>`) that Sampolio's own Split feature POSTs shared-expense activity to — see `docs/features.md` "Home Assistant notifications". This is unrelated to installing the add-on itself; it lets Sampolio *notify* Home Assistant. |
 | `tailscale_auth_key` | No | An auth key from your Tailscale admin console (Settings → Keys). Joins this add-on's own container as a separate tailnet device (distinct from any standalone Tailscale add-on), so it needs its own approval on first connect if your tailnet requires it. Leave blank to disable — the add-on has no Tailscale of its own by default. See "Embedded Tailscale" below. |
+| `tailscale_serve` | No | On by default when `tailscale_auth_key` is set. Publishes the **whole app** on port 8443 of this add-on's tailnet hostname — reachable from your tailnet only, over HTTPS with a real certificate. This is the intended way to use Sampolio, and why no host port is published by default. The HTTPS part is not cosmetic: over plain `http://` on a LAN address the browser discards the session cookie and sign-in never sticks. |
 | `tailscale_funnel` | No | `true`/`false`, only meaningful when `tailscale_auth_key` is set. Two exposures, both needed for the bank flow: **publicly**, via Tailscale Funnel, only `/api/bank/callback` — no other route, not the login page; and **to your tailnet**, on port 8443 of the same hostname, the **whole app**, because the callback needs a session cookie set on that hostname (see "Embedded Tailscale"). Everyone on your tailnet can therefore reach Sampolio's login while this is on. Off by default; turn it back off once the bank is linked. |
 | `reset_admin_password` | No | A recovery switch, not a password field. Turn it on and restart: the add-on generates a new password for the admin account, prints it **once** in the add-on log, and will not do it again until you turn the switch off. Nothing is stored in `options.json`. Use this instead of reinstalling when you cannot sign in. |
 | `wipe_data` | No | Deletes **all** Sampolio data (`/data/sampolio`) on the next start, then refuses to repeat until you switch it off again. Sign up afterwards — the first account becomes the admin. Irreversible: take a Home Assistant backup first. |
@@ -155,22 +156,24 @@ and restarts. Include this add-on's data in your normal Home Assistant
 
 ## Access
 
-The add-on publishes **port 3999**; it does not use Home Assistant Ingress.
-Ingress would put HA's own login and 2FA in front of Sampolio, which would be
-strictly better, but the app does not render under it — Next.js needs a
-build-time `basePath` to match the rotating ingress-token path prefix, and
-that token isn't known until the add-on runs. This is recorded in the repo's
-`docs/known-gaps.md` #4 and will be revisited if Next.js gains runtime
-base-path support.
+**No host port is published by default.** Home Assistant Ingress would be the
+best option — it puts HA's own login and 2FA in front — but the app does not
+render under it: Next.js needs a build-time `basePath` to match the rotating
+ingress-token path prefix, and that token is not known until the add-on runs
+(`docs/known-gaps.md` #4). So rather than expose an unauthenticated port by
+default, the add-on publishes nothing until you ask for it.
 
-**You must reach it over HTTPS.** The session cookie is
-`__Secure-authjs.session-token`, which browsers refuse to store unless it
-arrives over HTTPS, so signing in at `http://<your-ha-host>:3999` fails — you
-land back on the sign-in page with no session. Use an HTTPS front door: a
-standalone Tailscale add-on's Serve/Services gives you a real certificate and
-a `*.ts.net` hostname pointing at this port, which is tailnet-only. (From the
-Home Assistant host itself, `http://localhost:3999` also works, because
-browsers treat localhost as trustworthy.) See `docs/known-gaps.md` #5.
+**The intended way in is `tailscale_serve`**: set `tailscale_auth_key`, and the
+app is served at `https://sampolio-callback.<your-tailnet>.ts.net:8443`,
+reachable from your tailnet only. Set `auth_url` to that same URL. Being real
+HTTPS, the session cookie keeps its `Secure` attribute, which plain-HTTP
+access cannot do.
+
+**If you want LAN access instead**, set a host port in the add-on's **Network**
+section (3999 is offered). Then open it at `http://<ha-host>:3999` — and note
+that sign-in works there only because the add-on detects a plain-`http://`
+`auth_url` and drops the `Secure` cookie attribute accordingly, which means
+the session cookie travels in clear text on your network.
 
 **And on this port, Sampolio's own login is the only thing protecting your
 financial data.** There is no Home Assistant session check in front of it. So:

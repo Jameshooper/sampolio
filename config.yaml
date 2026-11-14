@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.21.0"
+version: "3.22.0"
 slug: sampolio
 description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -8,22 +8,24 @@ arch:
   - aarch64
 startup: application
 boot: auto
-# A published port, NOT Ingress. Ingress would put Home Assistant's own login
-# and 2FA in front of the app, which is strictly better, but the app does not
-# render under it: Next.js needs a build-time `basePath` to match the
-# ingress-token path prefix client-side, and that token is not known until the
-# add-on runs. Verified in a browser against a mock Supervisor — see
-# docs/known-gaps.md #4 and docs/operations.md §12. Revisit if Next.js gains
-# runtime base-path support.
+# No published port by default. Ingress would be better still — it puts Home
+# Assistant's own login and 2FA in front — but the app cannot render under it
+# (docs/known-gaps.md #4), so the next best thing is not to expose an
+# unauthenticated port unless it is asked for. `null` means Supervisor
+# publishes nothing until a host port is set in the add-on's Network section.
 #
-# Consequence to be deliberate about: on this port the ONLY authentication is
-# Sampolio's own NextAuth login. Keep the port off the public internet — the
-# separately-scoped Tailscale Funnel path for the bank callback (run.sh) is
-# the one intentional exception, and it publishes that single route.
+# The intended way in is tailscale_serve: the whole app on :8443 of this
+# add-on's own tailnet hostname, reachable from your tailnet only and over
+# real HTTPS. That matters beyond exposure — a session cookie keeps its
+# Secure attribute there, whereas over plain http:// on a LAN address the
+# browser discards it and sign-in silently never sticks.
+#
+# If you do publish the port: nothing but Sampolio's own login stands in
+# front of it, so keep it off the public internet.
 ports:
-  3999/tcp: 3999
+  3999/tcp: null
 ports_description:
-  3999/tcp: Sampolio web UI (protect at the network layer — no Home Assistant auth in front)
+  3999/tcp: Optional direct access (no Home Assistant auth in front — prefer tailscale_serve)
 webui: "http://[HOST]:[PORT:3999]"
 panel_icon: mdi:cash-multiple
 map:
@@ -51,6 +53,7 @@ options:
   enable_banking_private_key_file: "/ssl/sampolio-enable-banking.pem"
   ha_webhook_url: ""
   tailscale_auth_key: ""
+  tailscale_serve: true
   tailscale_funnel: false
   reset_admin_password: false
   wipe_data: false
@@ -67,6 +70,7 @@ schema:
   enable_banking_private_key_file: str?
   ha_webhook_url: str?
   tailscale_auth_key: password?
+  tailscale_serve: bool
   tailscale_funnel: bool
   # Recovery switches. Both act once and then refuse to repeat until switched
   # off again, so leaving one on cannot wipe the data on every restart.
