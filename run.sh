@@ -25,9 +25,36 @@ get_option() {
   ' "$1" "$OPTIONS_FILE"
 }
 
+# Read a secret from a file, falling back to a literal value.
+#
+# A secret given as an add-on OPTION is stored verbatim in
+# /data/options.json, rendered on the Configuration tab, and travels in the
+# add-on's config backup. The `password` schema type only masks the input box
+# — it changes nothing about any of that. Naming a file instead keeps the
+# value off that page and out of the add-on's own backup.
+#
+# This is a reduction in surfaces, NOT encryption: the file is still plain
+# text on the host, and a FULL Home Assistant backup includes /ssl. Encrypt
+# your backups.
+#
+# $1 = path (may be empty), $2 = fallback literal. Never echoed.
+read_secret() {
+  if [ -n "${1:-}" ]; then
+    if [ -r "$1" ]; then
+      # Command substitution strips the trailing newline an editor leaves.
+      printf '%s' "$(cat "$1")"
+      return 0
+    fi
+    echo "Sampolio: secret file '$1' is missing or unreadable — falling back to the inline option." >&2
+  fi
+  printf '%s' "${2:-}"
+}
+
 if [ -f "$OPTIONS_FILE" ]; then
-  AUTH_SECRET="${AUTH_SECRET:-$(get_option auth_secret)}"
-  ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(get_option encryption_key)}"
+  AUTH_SECRET_FILE="${AUTH_SECRET_FILE:-$(get_option auth_secret_file)}"
+  ENCRYPTION_KEY_FILE="${ENCRYPTION_KEY_FILE:-$(get_option encryption_key_file)}"
+  AUTH_SECRET="${AUTH_SECRET:-$(read_secret "${AUTH_SECRET_FILE:-}" "$(get_option auth_secret)")}"
+  ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(read_secret "${ENCRYPTION_KEY_FILE:-}" "$(get_option encryption_key)")}"
   AUTH_URL="${AUTH_URL:-$(get_option auth_url)}"
   ENABLE_BANKING_APP_ID="${ENABLE_BANKING_APP_ID:-$(get_option enable_banking_app_id)}"
   ENABLE_BANKING_REDIRECT_URL="${ENABLE_BANKING_REDIRECT_URL:-$(get_option enable_banking_redirect_url)}"
@@ -39,6 +66,20 @@ if [ -f "$OPTIONS_FILE" ]; then
   TAILSCALE_FUNNEL="${TAILSCALE_FUNNEL:-$(get_option tailscale_funnel)}"
   RESET_ADMIN_PASSWORD="${RESET_ADMIN_PASSWORD:-$(get_option reset_admin_password)}"
   WIPE_DATA="${WIPE_DATA:-$(get_option wipe_data)}"
+
+  # A value still in the inline option is on the Configuration tab and in
+  # options.json whether or not it is the one being used.
+  for _opt in auth_secret encryption_key; do
+    if [ -n "$(get_option "$_opt")" ]; then
+      case "$_opt" in
+        auth_secret) _file="${AUTH_SECRET_FILE:-}" ;;
+        *)           _file="${ENCRYPTION_KEY_FILE:-}" ;;
+      esac
+      if [ -n "$_file" ]; then
+        echo "Sampolio: ${_opt} is set as an option AND as a file. The file is used; clear the option so the value stops being stored in options.json." >&2
+      fi
+    fi
+  done
 fi
 
 if [ -z "${AUTH_SECRET:-}" ] || [ -z "${ENCRYPTION_KEY:-}" ] || [ -z "${AUTH_URL:-}" ]; then

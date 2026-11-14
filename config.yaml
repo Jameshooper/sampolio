@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.23.0"
+version: "3.24.0"
 slug: sampolio
 description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -46,7 +46,9 @@ map:
 # add-ons — for a capability this add-on never actually needs.
 options:
   auth_secret: ""
+  auth_secret_file: ""
   encryption_key: ""
+  encryption_key_file: ""
   auth_url: ""
   enable_banking_app_id: ""
   enable_banking_redirect_url: ""
@@ -59,8 +61,17 @@ options:
   reset_admin_password: false
   wipe_data: false
 schema:
-  auth_secret: password
-  encryption_key: password
+  # Either give the value here, or — better — put it in a file under /ssl and
+  # name the file instead. An option's value is stored verbatim in
+  # options.json, shown on the Configuration tab and carried in the add-on's
+  # config backup; the `password` type below only masks the input box and
+  # changes none of that. The file is still plain text on the host, so this
+  # reduces surfaces rather than encrypting anything — encrypt your Home
+  # Assistant backups too.
+  auth_secret: password?
+  auth_secret_file: str?
+  encryption_key: password?
+  encryption_key_file: str?
   auth_url: url
   enable_banking_app_id: str?
   # str?, not url? — these default to "" and HA's url validator rejects an

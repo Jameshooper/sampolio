@@ -210,6 +210,67 @@ describe('run.sh required configuration', () => {
   });
 });
 
+describe('run.sh file-backed secrets', () => {
+  function secretFile(value: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sampolio-secret-'));
+    tmpDirs.push(dir);
+    const p = path.join(dir, 'secret');
+    fs.writeFileSync(p, `${value}\n`, { mode: 0o600 }); // editors leave a newline
+    return p;
+  }
+
+  it('starts with the secrets supplied only as files', async () => {
+    const res = await runEntrypoint({
+      auth_url: 'http://192.0.2.10:3999',
+      auth_secret: '',
+      encryption_key: '',
+      auth_secret_file: secretFile('secret-from-file'),
+      encryption_key_file: secretFile('key-from-file'),
+    });
+    expect(res.code).toBe(0);
+    expect(res.stubLog).toContain('ha-ingress-proxy.mjs');
+  });
+
+  it('still refuses to start when a named secret file does not exist', async () => {
+    // Falling back to an empty inline option must not look like success.
+    const res = await runEntrypoint({
+      auth_url: 'http://192.0.2.10:3999',
+      auth_secret: '',
+      encryption_key: '',
+      auth_secret_file: '/ssl/nope.txt',
+      encryption_key_file: '/ssl/nope.txt',
+    });
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain('missing or unreadable');
+  });
+
+  it('falls back to the inline option when no file is named', async () => {
+    const res = await runEntrypoint(REQUIRED);
+    expect(res.code).toBe(0);
+  });
+
+  it('says to clear the option when a secret is given both ways', async () => {
+    // The option value sits in options.json whether or not it is the one used.
+    const res = await runEntrypoint({
+      ...REQUIRED,
+      auth_secret_file: secretFile('secret-from-file'),
+    });
+    expect(res.code).toBe(0);
+    expect(res.stderr).toContain('clear the option');
+  });
+
+  it('never prints a secret, from either source', async () => {
+    const res = await runEntrypoint({
+      auth_url: 'http://192.0.2.10:3999',
+      auth_secret: '',
+      encryption_key: 'inline-encryption-key-value',
+      auth_secret_file: secretFile('secret-from-file'),
+    });
+    expect(`${res.stdout}${res.stderr}`).not.toContain('secret-from-file');
+    expect(`${res.stdout}${res.stderr}`).not.toContain('inline-encryption-key-value');
+  });
+});
+
 describe('run.sh process topology', () => {
   it('binds Next.js to loopback on the internal port, never the published one', async () => {
     // If Next.js bound 0.0.0.0:3999 it would serve an unrewritten, unproxied

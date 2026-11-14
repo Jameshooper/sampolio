@@ -59,10 +59,20 @@ describe('add-on manifest', () => {
   });
 
   it('marks every secret-bearing option as a password field', () => {
-    for (const key of ['auth_secret', 'encryption_key']) {
-      expect(configYaml).toMatch(new RegExp(`${key}:\\s*password\\b`));
+    // password only masks the input box — it does not protect storage — but
+    // an unmasked secret field would be strictly worse.
+    for (const key of ['auth_secret', 'encryption_key', 'tailscale_auth_key']) {
+      expect(configYaml).toMatch(new RegExp(`${key}:\\s*password\\??`));
     }
-    expect(configYaml).toMatch(/tailscale_auth_key:\s*password\?/);
+  });
+
+  it('offers a file alternative for every secret kept in an option', () => {
+    // A value in an option lives in options.json and on the Configuration
+    // tab; naming a file keeps it out of both.
+    for (const key of ['auth_secret', 'encryption_key']) {
+      expect(configYaml).toMatch(new RegExp(`${key}_file:\\s*str\\?`));
+    }
+    expect(configYaml).toMatch(/enable_banking_private_key_file:\s*str\?/);
   });
 
   it('takes the bank signing key by path, never by value', () => {

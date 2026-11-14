@@ -31,6 +31,8 @@ installs of the same app.
 |---|---|---|
 | `auth_secret` | **Yes** | NextAuth session secret. Generate with `openssl rand -base64 32`. |
 | `encryption_key` | **Yes** | AES-256-GCM master key for the encrypted data files. Generate with `openssl rand -hex 32`. **Never change this once data exists** — existing accounts become unreadable. |
+| `auth_secret_file` | No | Path to a file holding `auth_secret` instead of pasting the value above — e.g. `/ssl/sampolio-auth-secret`. Keeps it off the Configuration tab and out of the add-on's config backup. Still a plain-text file on the host: this reduces where the value appears, it does not encrypt it. |
+| `encryption_key_file` | No | Same, for `encryption_key`. If you use it, clear the inline option — a value left there stays in `options.json` regardless. |
 | `auth_url` | **Yes** | A syntactically valid `https://` URL for NextAuth's own internal use. It doesn't need to exactly match whatever URL you're actually browsing through (a LAN IP, `homeassistant.local`, or a Tailscale hostname all reach the same port); `AUTH_TRUST_HOST=true` (set by `run.sh`) plus this app's own use of relative redirects makes that unnecessary. Any stable placeholder like `https://sampolio.local` works. |
 | `enable_banking_app_id` | No | Enable Banking (PSD2 AIS) application id. Leave all three `enable_banking_*` options blank to keep bank sync fully disabled (zero network calls) — see [`docs/bank-sync.md`](docs/bank-sync.md). |
 | `enable_banking_redirect_url` | No | Must be `<auth_url>/api/bank/callback` and publicly reachable if bank sync is enabled. |
@@ -172,6 +174,33 @@ income that still remains.
 The same webhook also receives Split activity, which does contain names and
 expense titles. Branch on `event` in your automation: `summary.updated` is the
 numbers-only feed.
+
+## A note on secrets and plain text
+
+Home Assistant stores add-on options as a plain JSON file (`/data/options.json`).
+The `password` type in an add-on's schema **only masks the input box** — it
+does nothing to how the value is stored. Any secret given as an option is
+therefore readable on disk, rendered on the Configuration tab, and carried in
+the add-on's config backup.
+
+This add-on lets you name a **file** instead for the three that matter
+(`auth_secret_file`, `encryption_key_file`, `enable_banking_private_key_file`),
+which keeps those values off the Configuration tab and out of the add-on's own
+backup. Be clear about what that buys: the file is still plain text on the
+host, and a **full** Home Assistant backup includes `/ssl`. It reduces the
+number of places a secret appears; it does not encrypt anything.
+
+What actually moves the needle:
+
+- **Encrypt your Home Assistant backups** (set a backup password). This is the
+  single highest-value change, because backups are what leave the house.
+- Keep the add-on's port unpublished and reach it over Tailscale.
+- Treat anything that was ever pasted into an option as exposed, and rotate it.
+
+A process that must start unattended after a power cut has to be able to read
+its own secrets without a human present, so some form of on-disk secret is
+unavoidable here. The deployment notes in `docs/operations.md` describe a
+setup with stronger at-rest properties for anyone who wants them.
 
 ## Data & backups
 
