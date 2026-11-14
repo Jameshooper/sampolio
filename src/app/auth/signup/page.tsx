@@ -78,8 +78,15 @@ export default function SignUpPage() {
                 router.push('/');
                 router.refresh();
             }
-        } catch {
-            setError('An error occurred. Please try again.');
+        } catch (err) {
+            // Show what actually went wrong. A bare catch here turned every
+            // failure into "An error occurred" with nothing in the server log
+            // either, because a server action that fails at the framework
+            // level (an Origin/Host mismatch behind a proxy, for instance)
+            // never reaches the action's own error handling.
+            const detail = err instanceof Error ? err.message : String(err);
+            console.error('[signup] Request failed:', err);
+            setError(`Could not create the account: ${detail}`);
         } finally {
             setIsLoading(false);
         }

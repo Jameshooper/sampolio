@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, Suspense, useEffect, useRef } from 'react';
-import { signIn } from 'next-auth/react';
+import { getSession, signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useForm, Controller } from 'react-hook-form';
@@ -107,6 +107,21 @@ function SignInForm() {
                     setError('Invalid email or password');
                 }
             } else {
+                // The credentials were accepted, but that only means the
+                // server SET a cookie — it does not mean the browser kept it.
+                // A __Secure- prefixed cookie is discarded outright when the
+                // page is not served over HTTPS (localhost excepted), which
+                // otherwise looks like nothing happening at all: the redirect
+                // below bounces straight back here with no error anywhere.
+                const session = await getSession();
+                if (!session) {
+                    setError(
+                        'Your password was correct, but the browser did not keep the session cookie. ' +
+                        'That happens when the app is opened over plain http:// on an address other than ' +
+                        'localhost. Open it over its https:// address instead.'
+                    );
+                    return;
+                }
                 // Clear attempt count on success
                 setAttemptCount(0);
                 router.push(callbackUrl);
@@ -120,7 +135,9 @@ function SignInForm() {
                 setLockoutTimeRemaining(data.retryAfter || 60);
                 setError('Too many login attempts. Please wait before trying again.');
             } else {
-                setError('An error occurred. Please try again.');
+                const detail = err instanceof Error ? err.message : String(err);
+                console.error('[signin] Request failed:', err);
+                setError(`Could not sign in: ${detail}`);
             }
         } finally {
             setIsLoading(false);

@@ -41,6 +41,7 @@ export async function signUp(
     if (!isFirstUser) {
       const selfSignupEnabled = await isSelfSignupEnabled();
       if (!selfSignupEnabled) {
+        console.warn('[signup] Rejected: self-signup is disabled and an account already exists.');
         return {
           success: false,
           error: 'Self-signup is currently disabled. Please contact an administrator.',
@@ -51,11 +52,16 @@ export async function signUp(
     // Check if user already exists
     const existingUser = await findUserByEmail(email);
     if (existingUser) {
+      console.warn(`[signup] Rejected for ${email}: an account with that address already exists.`);
       return { success: false, error: 'An account with this email already exists' };
     }
 
     // Create the user
     const user = await createUser(email, password, name);
+    console.log(
+      `[signup] Created ${user.role} account for ${user.email}` +
+        (isFirstUser ? ' (first user — granted admin).' : '.')
+    );
 
     return {
       success: true,
@@ -68,10 +74,19 @@ export async function signUp(
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
+      // Field names only — the values are the password and the email.
+      console.warn(
+        `[signup] Rejected: ${error.issues
+          .map((i) => `${i.path.join('.') || 'value'}: ${i.message}`)
+          .join('; ')}`
+      );
       return { success: false, error: error.issues[0]?.message ?? 'Validation error' };
     }
-    console.error('Sign up error:', error);
-    return { success: false, error: 'Failed to create account' };
+    console.error('[signup] Failed with an unexpected error:', error instanceof Error ? error.message : error);
+    return {
+      success: false,
+      error: error instanceof Error ? `Failed to create account: ${error.message}` : 'Failed to create account',
+    };
   }
 }
 

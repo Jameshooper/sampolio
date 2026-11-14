@@ -2,6 +2,7 @@ import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { z } from 'zod';
 import { findUserByEmail, verifyPassword, recordFailedLogin, recordSuccessfulLogin, isAccountLocked } from '@/lib/db/users';
+import { sessionCookieName, secureCookiesEnabled } from '@/lib/auth-cookies';
 import type { UserRole } from '@/types';
 
 const signInSchema = z.object({
@@ -21,12 +22,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
   cookies: {
     sessionToken: {
-      name: process.env.NODE_ENV === 'production' ? '__Secure-authjs.session-token' : 'authjs.session-token',
+      // Keyed on AUTH_URL's scheme, not NODE_ENV — see auth-cookies.ts for
+      // why, and for the trade-off this makes over plain HTTP.
+      name: sessionCookieName(),
       options: {
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production',
+        secure: secureCookiesEnabled(),
       },
     },
   },
@@ -59,41 +62,67 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
+        // Every branch below logs exactly one reason, always prefixed
+        // [auth], so a failed sign-in is diagnosable from the add-on log
+        // alone. Never log the password, or anything derived from it.
+        let email = '<unparsed>';
         try {
-          const { email, password } = signInSchema.parse(credentials);
+          const parsed = signInSchema.safeParse(credentials);
+          if (!parsed.success) {
+            // Previously this threw into the catch below and surfaced as a
+            // generic "Auth error", which looked identical to a server fault.
+            console.warn(
+              `[auth] Rejected sign-in: credentials failed validation (${parsed.error.issues
+                .map((i) => `${i.path.join('.') || 'value'}: ${i.message}`)
+                .join('; ')})`
+            );
+            return null;
+          }
+          email = parsed.data.email;
+          const { password } = parsed.data;
           console.log(`[auth] Login attempt for: ${email}`);
-          
+
           // Check if account is locked due to too many failed attempts
           const locked = await isAccountLocked(email);
           if (locked) {
-            console.warn(`[auth] Account locked: ${email}`);
+            console.warn(
+              `[auth] Rejected sign-in for ${email}: account is temporarily locked after repeated failed attempts. ` +
+                `Wait for the lockout to expire, or clear it with the add-on's reset_admin_password option.`
+            );
             return null;
           }
-          
+
           const user = await findUserByEmail(email);
           if (!user) {
-            console.warn(`[auth] User not found: ${email} (check ENCRYPTION_KEY if user should exist)`);
+            console.warn(
+              `[auth] Rejected sign-in for ${email}: no such user in this data directory. ` +
+                `If the account should exist, ENCRYPTION_KEY likely differs from the one it was created with.`
+            );
             // Record failed attempt even for non-existent users to prevent enumeration
             await recordFailedLogin(email);
             return null;
           }
-          
+
           // Check if user is active
           if (!user.isActive) {
-            console.warn(`[auth] Inactive user: ${email}`);
+            console.warn(`[auth] Rejected sign-in for ${email}: account is deactivated.`);
             return null;
           }
-          
+
           const isValid = await verifyPassword(user, password);
           if (!isValid) {
-            console.warn(`[auth] Invalid password for: ${email}`);
+            console.warn(
+              `[auth] Rejected sign-in for ${email}: password does not match the stored hash. ` +
+                `The account exists and decrypted fine, so this is the password itself.`
+            );
             await recordFailedLogin(email);
             return null;
           }
-          
+
           // Record successful login
           await recordSuccessfulLogin(email);
-          
+          console.log(`[auth] Sign-in succeeded for: ${email}`);
+
           return {
             id: user.id,
             email: user.email,
@@ -101,7 +130,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             role: user.role,
           };
         } catch (error) {
-          console.error('Auth error:', error);
+          console.error(
+            `[auth] Sign-in for ${email} failed with an unexpected error:`,
+            error instanceof Error ? error.message : error
+          );
           return null;
         }
       },

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { getToken } from 'next-auth/jwt';
+import { sessionCookieName, secureCookiesEnabled } from '@/lib/auth-cookies';
 
 // This middleware runs on the Edge runtime, so it cannot import Node.js modules
 // For auth checks, we rely on the auth token being present
@@ -94,7 +96,7 @@ const PROTECTED_PREFIXES = [
   '/settings',
 ];
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const clientIp = getClientIp(request);
 
@@ -188,13 +190,41 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(signInUrl);
   }
 
-  // If a user with a session cookie reaches an auth page, it means their
-  // server-side auth() check failed (stale/invalid JWT) and they were
-  // redirected here.  Clear the invalid cookie so they can re-authenticate
-  // without a redirect loop (proxy sees cookie → redirects away → auth()
-  // fails → redirects back → loop).
+  // A session cookie on an auth page is ambiguous: it is either a stale JWT
+  // that the server-side auth() check already rejected (bounced here, and
+  // clearing it is what breaks the redirect loop), or a perfectly good
+  // session belonging to someone who just signed in.
+  //
+  // This used to assume the first and delete the cookie on sight, which made
+  // every successful sign-in destroy itself: the sign-in page calls
+  // router.refresh() straight after authenticating, that re-requests
+  // /auth/signin carrying the cookie that was just set, and this cleared it.
+  // Login looked like it silently did nothing. So verify the JWT and only
+  // clear it when it really is invalid.
   if (pathname.startsWith('/auth/signin') || pathname.startsWith('/auth/signup')) {
     if (hasAuthSession(request)) {
+      let sessionIsValid = false;
+      try {
+        const token = await getToken({
+          req: request,
+          secret: process.env.AUTH_SECRET,
+          cookieName: sessionCookieName(),
+          secureCookie: secureCookiesEnabled(),
+        });
+        sessionIsValid = Boolean(token);
+      } catch {
+        // Fall through to clearing. Treating an unreadable token as invalid
+        // keeps the loop-breaking behaviour this block exists for; the cost
+        // is one extra sign-in, versus an unescapable loop the other way.
+        sessionIsValid = false;
+      }
+
+      if (sessionIsValid) {
+        // Already signed in — send them into the app instead of showing a
+        // sign-in form, and leave the cookie alone.
+        return NextResponse.redirect(new URL('/', request.url));
+      }
+
       const response = NextResponse.next();
       response.cookies.delete('authjs.session-token');
       response.cookies.delete('__Secure-authjs.session-token');
