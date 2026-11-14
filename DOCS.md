@@ -36,6 +36,7 @@ installs of the same app.
 | `enable_banking_redirect_url` | No | Must be `<auth_url>/api/bank/callback` and publicly reachable if bank sync is enabled. |
 | `enable_banking_private_key_file` | No | **Path** to the RS256 PKCS#8 PEM — not its contents. Put the file in `/ssl` (mapped read-only into the add-on) and leave this at the default `/ssl/sampolio-enable-banking.pem`, or point it elsewhere under `/ssl`. The key is never copied, so it stays out of `options.json`, out of the Configuration tab and out of Home Assistant backups of the add-on's data. |
 | `ha_webhook_url` | No | A Home Assistant webhook URL (`.../api/webhook/<id>`) that Sampolio's own Split feature POSTs shared-expense activity to — see `docs/features.md` "Home Assistant notifications". This is unrelated to installing the add-on itself; it lets Sampolio *notify* Home Assistant. |
+| `ha_summary_minutes` | No | `0` = off. How often to push **summary numbers** to `ha_webhook_url`: account balances, card totals and what is left for the rest of the month. Numbers only — no transactions, merchants, categories, IBANs. Clamped to 5–1440 minutes. The payload is tagged `event: "summary.updated"` so an automation can tell it apart from Split activity on the same webhook. |
 | `tailscale_auth_key` | No | An auth key from your Tailscale admin console (Settings → Keys). Joins this add-on's own container as a separate tailnet device (distinct from any standalone Tailscale add-on), so it needs its own approval on first connect if your tailnet requires it. Leave blank to disable — the add-on has no Tailscale of its own by default. See "Embedded Tailscale" below. |
 | `tailscale_serve` | No | On by default when `tailscale_auth_key` is set. Publishes the **whole app** on port 8443 of this add-on's tailnet hostname — reachable from your tailnet only, over HTTPS with a real certificate. This is the intended way to use Sampolio, and why no host port is published by default. The HTTPS part is not cosmetic: over plain `http://` on a LAN address the browser discards the session cookie and sign-in never sticks. |
 | `tailscale_funnel` | No | `true`/`false`, only meaningful when `tailscale_auth_key` is set. Two exposures, both needed for the bank flow: **publicly**, via Tailscale Funnel, only `/api/bank/callback` — no other route, not the login page; and **to your tailnet**, on port 8443 of the same hostname, the **whole app**, because the callback needs a session cookie set on that hostname (see "Embedded Tailscale"). Everyone on your tailnet can therefore reach Sampolio's login while this is on. Off by default; turn it back off once the bank is linked. |
@@ -146,6 +147,31 @@ To set the new key up:
 
 On start the add-on also deletes any copy of the key that an earlier version
 left in its data directory.
+
+## Reading your figures in Home Assistant
+
+Set `ha_webhook_url` to a Home Assistant webhook and `ha_summary_minutes` to,
+say, `30`. Sampolio then POSTs a payload like this on that interval:
+
+```json
+{
+  "event": "summary.updated",
+  "ts": "2026-11-14T20:00:00.000Z",
+  "currency": "EUR",
+  "totals": { "cashBalance": 200000, "cardOutstanding": 50000, "leftThisMonth": 120000 },
+  "accounts": [{ "id": "…", "name": "Joint account", "endOfMonthBalance": 150000, "leftThisMonth": 90000 }],
+  "cards": [{ "id": "…", "name": "Everyday Visa", "outstanding": 42000, "availableCredit": 158000 }]
+}
+```
+
+Amounts are in cents. `leftThisMonth` is what the month ends with if no
+further income arrives — what there is to last on until the next pay. It stays
+correct mid-month: once a salary is booked, the projection counts only the
+income that still remains.
+
+The same webhook also receives Split activity, which does contain names and
+expense titles. Branch on `event` in your automation: `summary.updated` is the
+numbers-only feed.
 
 ## Data & backups
 

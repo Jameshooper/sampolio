@@ -33,6 +33,7 @@ if [ -f "$OPTIONS_FILE" ]; then
   ENABLE_BANKING_REDIRECT_URL="${ENABLE_BANKING_REDIRECT_URL:-$(get_option enable_banking_redirect_url)}"
   ENABLE_BANKING_PRIVATE_KEY_FILE="${ENABLE_BANKING_PRIVATE_KEY_FILE:-$(get_option enable_banking_private_key_file)}"
   HA_WEBHOOK_URL="${HA_WEBHOOK_URL:-$(get_option ha_webhook_url)}"
+  HA_SUMMARY_MINUTES="${HA_SUMMARY_MINUTES:-$(get_option ha_summary_minutes)}"
   TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-$(get_option tailscale_auth_key)}"
   TAILSCALE_SERVE="${TAILSCALE_SERVE:-$(get_option tailscale_serve)}"
   TAILSCALE_FUNNEL="${TAILSCALE_FUNNEL:-$(get_option tailscale_funnel)}"
@@ -127,6 +128,11 @@ fi
 
 if [ -n "${HA_WEBHOOK_URL:-}" ]; then
   export HA_WEBHOOK_URL
+fi
+
+# Periodic account-summary push. Numbers only; see src/lib/ha-summary.ts.
+if [ -n "${HA_SUMMARY_MINUTES:-}" ] && [ "${HA_SUMMARY_MINUTES:-0}" != "0" ]; then
+  export HA_SUMMARY_MINUTES
 fi
 
 PORT="${PORT:-3999}"

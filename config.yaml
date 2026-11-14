@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.22.0"
+version: "3.23.0"
 slug: sampolio
 description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -52,6 +52,7 @@ options:
   enable_banking_redirect_url: ""
   enable_banking_private_key_file: "/ssl/sampolio-enable-banking.pem"
   ha_webhook_url: ""
+  ha_summary_minutes: 0
   tailscale_auth_key: ""
   tailscale_serve: true
   tailscale_funnel: false
@@ -69,6 +70,9 @@ schema:
   enable_banking_redirect_url: str?
   enable_banking_private_key_file: str?
   ha_webhook_url: str?
+  # 0 = off. Pushes balances, card totals and the month's headroom — numbers
+  # only, never transactions or merchant names — to ha_webhook_url.
+  ha_summary_minutes: int(0,1440)?
   tailscale_auth_key: password?
   tailscale_serve: bool
   tailscale_funnel: bool

@@ -23,5 +23,8 @@ export async function register(): Promise<void> {
 
     const { startBankScheduler } = await import('@/lib/bank/scheduler');
     startBankScheduler();
+
+    const { startHaSummaryScheduler } = await import('@/lib/ha-summary-scheduler');
+    startHaSummaryScheduler();
   }
 }
