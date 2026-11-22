@@ -1,6 +1,6 @@
 # Sampolio - Personal Finance Planner
 
-A self-hosted personal finance planning tool that replaces budgeting spreadsheets with a powerful, private workflow. Track multiple accounts, project your financial future, manage debts and investments, reconcile balances, and optionally sync read-only bank data (Enable Banking / PSD2) — all stored locally with AES-256-GCM encryption.
+A self-hosted personal finance planner that replaces budgeting spreadsheets with a private, powerful workflow. Track multiple accounts and project years ahead, run budgets, goals and trips, follow debts and investments, share a mortgage and split expenses with other people, reconcile against real balances, and optionally sync read-only bank data (Enable Banking / PSD2). Financial data is stored locally, encrypted with AES-256-GCM.
 
 ## Features
 

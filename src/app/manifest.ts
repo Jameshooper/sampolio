@@ -9,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: 'Sampolio — Personal Finance Planner',
     short_name: 'Sampolio',
     description:
-      'A personal finance planning tool that replaces your budgeting spreadsheet with a cleaner, more powerful workflow.',
+      'A self-hosted personal finance planner — cash flow projections, budgets, goals and trips, shared mortgage and split expenses, with optional read-only bank sync.',
     start_url: '/',
     scope: '/',
     display: 'standalone',

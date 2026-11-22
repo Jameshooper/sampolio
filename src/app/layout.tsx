@@ -14,7 +14,7 @@ const hanken = Hanken_Grotesk({
 export const metadata: Metadata = {
   applicationName: "Sampolio",
   title: "Sampolio - Personal Finance Planner",
-  description: "A personal finance planning tool that replaces your budgeting spreadsheet with a cleaner, more powerful workflow",
+  description: "A self-hosted personal finance planner — cash flow projections, budgets, goals and trips, shared mortgage and split expenses, with optional read-only bank sync",
   // Keeps the existing src/app/favicon.ico convention; adds PWA + apple icons.
   icons: {
     icon: [
