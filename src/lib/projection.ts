@@ -234,6 +234,19 @@ export function resolveAnchor(
 }
 
 // Generate the list of months for projection
+/** Round a money amount to whole cents, removing binary-float noise
+ * (2500.55 − 950 = 1550.5500000000002) so it can't accumulate month to month. */
+export function roundMoney(amount: number): number {
+  const cents = Number((amount * 100).toPrecision(15));
+  const rounded = (Math.sign(cents) * Math.round(Math.abs(cents))) / 100;
+  return rounded === 0 ? 0 : rounded;
+}
+
+/** Hard ceiling on projection length, whatever the stored account says (the
+ * action schemas cap horizons at 600 months; this guards stored/imported data
+ * from turning one projection into millions of months). */
+export const MAX_PROJECTION_MONTHS = 1200;
+
 export function generateMonthList(
   account: FinancialAccount,
   anchor?: ProjectionAnchor
@@ -251,7 +264,7 @@ export function generateMonthList(
   }
 
   let currentDate = startMonth;
-  while (compareYearMonths(currentDate, endDate) <= 0) {
+  while (compareYearMonths(currentDate, endDate) <= 0 && months.length < MAX_PROJECTION_MONTHS) {
     months.push(currentDate);
     currentDate = addMonths(currentDate, 1);
   }
@@ -726,17 +739,17 @@ export function calculateProjection(
         }
       }
 
-      const netChange = remainingIncome - remainingExpenses;
+      const netChange = roundMoney(remainingIncome - remainingExpenses);
       const startingBalance = runningBalance;
-      const endingBalance = startingBalance + netChange;
+      const endingBalance = roundMoney(startingBalance + netChange);
 
       projections.push({
         yearMonth,
         year,
         month,
         startingBalance,
-        totalIncome: remainingIncome,
-        totalExpenses: remainingExpenses,
+        totalIncome: roundMoney(remainingIncome),
+        totalExpenses: roundMoney(remainingExpenses),
         netChange,
         endingBalance,
         incomeBreakdown,
@@ -751,11 +764,11 @@ export function calculateProjection(
     }
 
     // Calculate totals
-    const totalIncome = incomeBreakdown.reduce((sum, item) => sum + item.amount, 0);
-    const totalExpenses = expenseBreakdown.reduce((sum, item) => sum + item.amount, 0);
-    const netChange = totalIncome - totalExpenses;
+    const totalIncome = roundMoney(incomeBreakdown.reduce((sum, item) => sum + item.amount, 0));
+    const totalExpenses = roundMoney(expenseBreakdown.reduce((sum, item) => sum + item.amount, 0));
+    const netChange = roundMoney(totalIncome - totalExpenses);
     const startingBalance = runningBalance;
-    const endingBalance = startingBalance + netChange;
+    const endingBalance = roundMoney(startingBalance + netChange);
 
     projections.push({
       yearMonth,

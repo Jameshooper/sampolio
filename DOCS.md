@@ -49,6 +49,7 @@ installs of the same app.
 | `tailscale_serve` | No | On by default when `tailscale_auth_key` is set. Publishes the **whole app** on port 8443 of this add-on's tailnet hostname — reachable from your tailnet only, over HTTPS with a real certificate. This is the intended way to use Sampolio, and why no host port is published by default. The HTTPS part is not cosmetic: over plain `http://` on a LAN address the browser discards the session cookie and sign-in never sticks. |
 | `tailscale_funnel` | No | `true`/`false`, only meaningful when `tailscale_auth_key` is set. Publishes **only** `/api/bank/callback` to the public internet, on port 443 — no other route, not the login page. Needed only while linking a bank. The callback also needs `tailscale_serve` on, because it requires a session cookie set on that same hostname (see "Embedded Tailscale"). Off by default; turn it back off once the bank is linked. |
 | `reset_admin_password` | No | A recovery switch, not a password field. Turn it on and restart: the add-on generates a new password for the admin account, prints it **once** in the add-on log, and will not do it again until you turn the switch off. Nothing is stored in `options.json`. Use this instead of reinstalling when you cannot sign in. |
+| `require_path_binding` | No | On by default. Every data file is encrypted so it only opens at its own path — a file copied over another user's (or restored from an older backup) will not load. On each start the add-on first upgrades any older-format files in place, then refuses unbound files. If an upgrade fails (almost always a different `encryption_key`), it stays in compatibility mode and says so in the log. Turn off only to read a data set whose upgrade keeps failing. |
 | `wipe_data` | No | Deletes **all** Sampolio data (`/data/sampolio`) on the next start, then refuses to repeat until you switch it off again. Sign up afterwards — the first account becomes the admin. Irreversible: take a Home Assistant backup first. |
 
 Options marked required are enforced at container startup: the add-on exits
@@ -268,5 +269,16 @@ Assistant iframe panel — open it in its own tab.
 ## Updating
 
 Update like any other add-on from the Supervisor UI. Your `/data` volume is
-untouched by updates. `encryption_key` must never change across an update —
+kept across updates. `encryption_key` must never change across an update —
 losing it (or changing it) makes existing data unreadable.
+
+**Updating to 4.0.0 from an earlier version** (skip this on a fresh install):
+
+- Take a backup of the add-on first (**Settings → System → Backups**, or tick
+  "back up before updating"). 4.0.0 upgrades the data files to a new encrypted
+  format on its first start, and **earlier versions cannot read that format** —
+  to roll back, restore that backup rather than downgrading the add-on.
+- Everyone has to sign in once after the update (sessions now carry a revocable
+  session id; older session cookies are refused).
+- Changing a password, deactivating or deleting an account, a role change and
+  signing out now end the affected sessions immediately.

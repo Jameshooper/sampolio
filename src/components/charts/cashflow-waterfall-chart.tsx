@@ -26,6 +26,7 @@ import {
     type ChartTourStep,
 } from '@/components/ui/chart-explain';
 import type { MonthlyProjection, Currency } from '@/types';
+import { escapeHtml } from '@/lib/html-escape';
 
 echarts.use([
     CandlestickChart,
@@ -123,7 +124,7 @@ export function CashflowWaterfallChart({ data, currency, height = '420px', nowMo
                     const m = data[idx];
                     if (!m) return '';
                     const lines = [
-                        `<strong>${formatYearMonth(m.yearMonth)}</strong>`,
+                        `<strong>${escapeHtml(formatYearMonth(m.yearMonth))}</strong>`,
                         `Starting: ${formatCurrency(m.startingBalance, currency)}`,
                         `<span style="color:#22c55e">▲ Income: +${formatCurrency(m.totalIncome, currency)}</span>`,
                         `<span style="color:#ef4444">▼ Expenses: -${formatCurrency(m.totalExpenses, currency)}</span>`,

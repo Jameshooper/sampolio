@@ -17,3 +17,9 @@ plans/
 *.md
 !DOCS.md
 !README.md
+# Personal data exports and local debris that must never reach an image.
+*.numbers
+*.csv
+dist/
+npm-debug.log*
+.pnpm-debug.log*

@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 import * as path from 'path';
-import { getUserDir, ensureDir, readEncryptedFile, writeEncryptedFile } from './encryption';
+import { getUserDir, ensureDir, readEncryptedFile, writeEncryptedFile, serialized } from './encryption';
 import type { BalanceSnapshot, ReconciliationAdjustment, ReconciliationSession, EntityType, AdjustmentCategory } from '@/types';
 
 const SNAPSHOTS_FILE = 'balance-snapshots.enc';
@@ -9,6 +9,12 @@ const SESSIONS_FILE = 'reconciliation-sessions.enc';
 
 function getReconciliationDir(userId: string): string {
   return path.join(getUserDir(userId), 'reconciliation');
+}
+
+/** Lock key shared by every writer of this user's reconciliation files
+ * (including the JSON backup import in data-transfer.ts). */
+export function getReconciliationLockKey(userId: string): string {
+  return getReconciliationDir(userId);
 }
 
 // ============================================================
@@ -65,7 +71,7 @@ export async function getLatestSnapshot(
   return snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
 }
 
-export async function createBalanceSnapshot(
+async function createBalanceSnapshotUnlocked(
   userId: string,
   entityType: EntityType,
   entityId: string,
@@ -114,7 +120,7 @@ export async function createBalanceSnapshot(
   return snapshot;
 }
 
-export async function deleteBalanceSnapshot(userId: string, snapshotId: string): Promise<boolean> {
+async function deleteBalanceSnapshotUnlocked(userId: string, snapshotId: string): Promise<boolean> {
   const data = await readSnapshots(userId);
   const index = data.snapshots.findIndex(s => s.id === snapshotId);
   if (index === -1) return false;
@@ -125,7 +131,7 @@ export async function deleteBalanceSnapshot(userId: string, snapshotId: string):
 }
 
 /** Bulk-delete snapshots by id in a single rewrite. Returns the count removed. */
-export async function deleteSnapshotsByIds(userId: string, ids: string[]): Promise<number> {
+async function deleteSnapshotsByIdsUnlocked(userId: string, ids: string[]): Promise<number> {
   if (ids.length === 0) return 0;
   const idSet = new Set(ids);
   const data = await readSnapshots(userId);
@@ -171,7 +177,7 @@ export async function getAllAdjustments(userId: string): Promise<ReconciliationA
 }
 
 /** Bulk-delete adjustments by id in a single rewrite. Returns the count removed. */
-export async function deleteAdjustmentsByIds(userId: string, ids: string[]): Promise<number> {
+async function deleteAdjustmentsByIdsUnlocked(userId: string, ids: string[]): Promise<number> {
   if (ids.length === 0) return 0;
   const idSet = new Set(ids);
   const data = await readAdjustments(userId);
@@ -182,7 +188,7 @@ export async function deleteAdjustmentsByIds(userId: string, ids: string[]): Pro
   return removed;
 }
 
-export async function createAdjustment(
+async function createAdjustmentUnlocked(
   userId: string,
   snapshotId: string,
   category: AdjustmentCategory,
@@ -205,7 +211,7 @@ export async function createAdjustment(
   return adjustment;
 }
 
-export async function deleteAdjustment(userId: string, adjustmentId: string): Promise<boolean> {
+async function deleteAdjustmentUnlocked(userId: string, adjustmentId: string): Promise<boolean> {
   const data = await readAdjustments(userId);
   const index = data.adjustments.findIndex(a => a.id === adjustmentId);
   if (index === -1) return false;
@@ -260,7 +266,7 @@ export async function getLatestCompletedSession(
 }
 
 /** Bulk-delete reconciliation sessions by id in a single rewrite. Returns the count removed. */
-export async function deleteSessionsByIds(userId: string, ids: string[]): Promise<number> {
+async function deleteSessionsByIdsUnlocked(userId: string, ids: string[]): Promise<number> {
   if (ids.length === 0) return 0;
   const idSet = new Set(ids);
   const data = await readSessions(userId);
@@ -271,7 +277,7 @@ export async function deleteSessionsByIds(userId: string, ids: string[]): Promis
   return removed;
 }
 
-export async function createReconciliationSession(
+async function createReconciliationSessionUnlocked(
   userId: string,
   yearMonth: string
 ): Promise<ReconciliationSession> {
@@ -303,7 +309,7 @@ export async function createReconciliationSession(
   return session;
 }
 
-export async function completeReconciliationSession(
+async function completeReconciliationSessionUnlocked(
   userId: string,
   sessionId: string
 ): Promise<ReconciliationSession | null> {
@@ -318,7 +324,7 @@ export async function completeReconciliationSession(
   return data.sessions[index];
 }
 
-export async function updateSessionSnapshots(
+async function updateSessionSnapshotsUnlocked(
   userId: string,
   sessionId: string,
   snapshots: BalanceSnapshot[]
@@ -332,7 +338,7 @@ export async function updateSessionSnapshots(
   return data.sessions[index];
 }
 
-export async function updateSessionAdjustments(
+async function updateSessionAdjustmentsUnlocked(
   userId: string,
   sessionId: string,
   adjustments: ReconciliationAdjustment[]
@@ -388,3 +394,17 @@ export async function getReconciliationSummary(
     lastReconciledAt: session?.completedAt,
   };
 }
+
+// Every mutation of the three per-user reconciliation files is serialized on
+// the user's reconciliation directory (read-modify-write; see withFileLock).
+export const createBalanceSnapshot = serialized((userId: string) => getReconciliationLockKey(userId), createBalanceSnapshotUnlocked);
+export const deleteBalanceSnapshot = serialized((userId: string) => getReconciliationLockKey(userId), deleteBalanceSnapshotUnlocked);
+export const deleteSnapshotsByIds = serialized((userId: string) => getReconciliationLockKey(userId), deleteSnapshotsByIdsUnlocked);
+export const deleteAdjustmentsByIds = serialized((userId: string) => getReconciliationLockKey(userId), deleteAdjustmentsByIdsUnlocked);
+export const createAdjustment = serialized((userId: string) => getReconciliationLockKey(userId), createAdjustmentUnlocked);
+export const deleteAdjustment = serialized((userId: string) => getReconciliationLockKey(userId), deleteAdjustmentUnlocked);
+export const deleteSessionsByIds = serialized((userId: string) => getReconciliationLockKey(userId), deleteSessionsByIdsUnlocked);
+export const createReconciliationSession = serialized((userId: string) => getReconciliationLockKey(userId), createReconciliationSessionUnlocked);
+export const completeReconciliationSession = serialized((userId: string) => getReconciliationLockKey(userId), completeReconciliationSessionUnlocked);
+export const updateSessionSnapshots = serialized((userId: string) => getReconciliationLockKey(userId), updateSessionSnapshotsUnlocked);
+export const updateSessionAdjustments = serialized((userId: string) => getReconciliationLockKey(userId), updateSessionAdjustmentsUnlocked);

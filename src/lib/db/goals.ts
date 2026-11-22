@@ -12,6 +12,7 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 function getGoalsDir(userId: string): string {
@@ -19,7 +20,7 @@ function getGoalsDir(userId: string): string {
 }
 
 function getGoalFile(userId: string, goalId: string): string {
-  return path.join(getGoalsDir(userId), `${goalId}.enc`);
+  return path.join(getGoalsDir(userId), `${assertSafeId(goalId)}.enc`);
 }
 
 // ============================================================

@@ -11,6 +11,7 @@ import { useAppContext } from '@/components/layout/app-layout';
 import { formatCents, formatYearMonthShort, getCategoryColor } from '@/lib/constants';
 import { bucketSpendByCategory, type SplitInsights } from '@/lib/split-insights';
 import type { Currency } from '@/types';
+import { escapeHtml } from '@/lib/html-escape';
 
 echarts.use([BarChart, TooltipComponent, GridComponent, LegendComponent, CanvasRenderer]);
 
@@ -126,10 +127,10 @@ export function SplitSpendChart({ insights, mode, currency }: SplitSpendChartPro
             .filter((p) => (p.value ?? 0) !== 0)
             .map((p) => {
               const pct = total > 0 ? Math.round(((p.value ?? 0) / total) * 100) : 0;
-              return `${p.marker}${p.seriesName}: ${formatCents(p.value, currency)} (${pct}%)`;
+              return `${p.marker}${escapeHtml(p.seriesName)}: ${formatCents(p.value, currency)} (${pct}%)`;
             });
-          if (rows.length === 0) return `${params[0].axisValue}<br/>No spending`;
-          return `<strong>${params[0].axisValue}</strong><br/>${rows.join('<br/>')}`;
+          if (rows.length === 0) return `${escapeHtml(params[0].axisValue)}<br/>No spending`;
+          return `<strong>${escapeHtml(params[0].axisValue)}</strong><br/>${rows.join('<br/>')}`;
         },
       },
       xAxis: {

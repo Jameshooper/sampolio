@@ -1,6 +1,6 @@
 import * as path from 'path';
 import type { UserPreferences } from '@/types';
-import { getUserDir, ensureDir, readEncryptedFile, writeEncryptedFile } from './encryption';
+import { getUserDir, ensureDir, readEncryptedFile, updateEncryptedFile } from './encryption';
 
 function getPreferencesFile(userId: string): string {
   return path.join(getUserDir(userId), 'preferences.enc');
@@ -21,12 +21,10 @@ export async function updateUserPreferences(
   userId: string,
   updates: Partial<Omit<UserPreferences, 'updatedAt'>>
 ): Promise<UserPreferences> {
-  const current = await getUserPreferences(userId);
-  const updated: UserPreferences = {
-    ...current,
+  await ensureDir(getUserDir(userId));
+  return updateEncryptedFile<UserPreferences>(getPreferencesFile(userId), (current) => ({
+    ...(current ?? DEFAULT_PREFERENCES),
     ...updates,
     updatedAt: new Date().toISOString(),
-  };
-  await writeEncryptedFile(getPreferencesFile(userId), updated);
-  return updated;
+  }));
 }

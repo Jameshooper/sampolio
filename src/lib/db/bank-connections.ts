@@ -25,6 +25,7 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 function getBankDir(userId: string): string {
@@ -36,11 +37,11 @@ function getConnectionsDir(userId: string): string {
 }
 
 function getConnectionFile(userId: string, connectionId: string): string {
-  return path.join(getConnectionsDir(userId), `${connectionId}.enc`);
+  return path.join(getConnectionsDir(userId), `${assertSafeId(connectionId)}.enc`);
 }
 
 function getSessionSecretFile(userId: string, connectionId: string): string {
-  return path.join(getConnectionsDir(userId), `${connectionId}.session.enc`);
+  return path.join(getConnectionsDir(userId), `${assertSafeId(connectionId)}.session.enc`);
 }
 
 // ============================================================

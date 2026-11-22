@@ -3,8 +3,9 @@
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { auth } from '@/lib/auth';
+import { isSafeId } from '@/lib/db/encryption';
+import { resolveMemberByEmail } from '@/lib/member-lookup-limit';
 import { updateTag } from 'next/cache';
-import { findUserByEmail } from '@/lib/db/users';
 import { updateUserPreferences as dbUpdateUserPreferences } from '@/lib/db/user-preferences';
 import {
   createSplitGroup as dbCreateSplitGroup,
@@ -86,6 +87,7 @@ type LoadResult =
 async function loadGroupForMember(groupId: string, opts?: { requireOwner?: boolean }): Promise<LoadResult> {
   const session = await auth();
   if (!session?.user?.id) return { ok: false, error: 'Unauthorized' };
+  if (!isSafeId(groupId)) return { ok: false, error: 'Group not found' };
   const group = await cachedGetSplitGroupById(groupId);
   if (!group) return { ok: false, error: 'Group not found' };
   const me = group.members.find((m) => m.userId === session.user.id);
@@ -390,8 +392,9 @@ export async function createSplitGroup(
 
     const resolved: SplitGroupMember[] = [];
     for (const m of validated.members ?? []) {
-      const user = await findUserByEmail(m.email);
-      if (!user || !user.isActive) return { success: false, error: `No active account for ${m.email}` };
+      const found = await resolveMemberByEmail(session.user.id, m.email);
+      if (!found.ok) return { success: false, error: found.error };
+      const user = found.user;
       if (user.id === session.user.id) continue;
       resolved.push({ userId: user.id, email: user.email, name: user.name, role: m.role ?? 'member' });
     }
@@ -445,8 +448,9 @@ export async function addSplitGroupMember(
   if (!loaded.ok) return { success: false, error: loaded.error };
   try {
     const { email, role } = addSplitMemberSchema.parse(data);
-    const user = await findUserByEmail(email);
-    if (!user || !user.isActive) return { success: false, error: `No active account for ${email}` };
+    const found = await resolveMemberByEmail(loaded.userId, email);
+    if (!found.ok) return { success: false, error: found.error };
+    const user = found.user;
     const updated = await dbAddMember(groupId, {
       userId: user.id,
       email: user.email,

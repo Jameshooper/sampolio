@@ -1,36 +1,26 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getToken } from 'next-auth/jwt';
-import { sessionCookieName, secureCookiesEnabled } from '@/lib/auth-cookies';
+import { decode } from 'next-auth/jwt';
+import { getClientIp } from '@/lib/client-ip';
+import { validateSessionClaims } from '@/lib/session-validation';
 
-// This middleware runs on the Edge runtime, so it cannot import Node.js modules
-// For auth checks, we rely on the auth token being present
-// The actual auth validation happens in the auth library when accessed
+// Proxy always runs on the Node.js runtime in Next 16. It does cheap,
+// request-level gating: rate limits, a body-size cap for unauthenticated
+// server-action calls, and redirecting obviously signed-out visitors. Real
+// authorisation (including revocation) happens in auth() on the server.
 
-// Rate limiting store (in-memory, resets on server restart)
-// For production with multiple instances, use Redis
+// Rate limiting store (in-memory, single process, resets on server restart)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 
 // Rate limit configuration
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
-const RATE_LIMIT_MAX_AUTH_UNAUTHENTICATED = 20; // 20 requests per minute for unauthenticated auth endpoints (login/signup)
-const RATE_LIMIT_MAX_GENERAL = 300; // 300 requests per minute for general endpoints
+const RATE_LIMIT_MAX_AUTH = 20; // per client per minute: credential posts, sign-up, and signed-out auth traffic
+const RATE_LIMIT_MAX_GENERAL = 300; // per client per minute for signed-out requests
 
-function getClientIp(request: NextRequest): string {
-  // Check various headers that proxies might set
-  const forwardedFor = request.headers.get('x-forwarded-for');
-  if (forwardedFor) {
-    return forwardedFor.split(',')[0].trim();
-  }
-
-  const realIp = request.headers.get('x-real-ip');
-  if (realIp) {
-    return realIp;
-  }
-
-  // Fallback to a generic identifier
-  return 'unknown';
-}
+// Unauthenticated server-action calls (sign-up, signup-status) are tiny; the
+// 20 MB action body limit in next.config.ts exists only for the signed-in
+// backup import. Refuse large bodies before Next buffers and parses them.
+const MAX_UNAUTHENTICATED_ACTION_BODY = 64 * 1024;
 
 function checkRateLimit(key: string, maxRequests: number): { allowed: boolean; remaining: number; resetIn: number } {
   const now = Date.now();
@@ -51,7 +41,7 @@ function checkRateLimit(key: string, maxRequests: number): { allowed: boolean; r
 
 // Clean up old rate limit entries periodically
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
+  const timer = setInterval(() => {
     const now = Date.now();
     for (const [key, record] of rateLimitStore.entries()) {
       if (now > record.resetTime) {
@@ -59,26 +49,84 @@ if (typeof setInterval !== 'undefined') {
       }
     }
   }, 60 * 1000); // Clean up every minute
+  (timer as { unref?: () => void }).unref?.();
 }
 
-// Check if user has a valid auth session cookie
-function hasAuthSession(request: NextRequest): boolean {
-  // NextAuth session cookies - check for both secure and non-secure variants
-  const sessionCookies = [
-    'authjs.session-token',
-    '__Secure-authjs.session-token',
-    'next-auth.session-token',
-    '__Secure-next-auth.session-token',
-  ];
+const SESSION_COOKIE_NAMES = [
+  '__Secure-authjs.session-token',
+  'authjs.session-token',
+  '__Secure-next-auth.session-token',
+  'next-auth.session-token',
+];
 
-  for (const cookieName of sessionCookies) {
-    const cookie = request.cookies.get(cookieName);
-    if (cookie?.value) {
-      return true;
+/** Raw session cookie (reassembling Auth.js chunked cookies), if any. */
+function getSessionCookie(request: NextRequest): { name: string; value: string } | null {
+  for (const name of SESSION_COOKIE_NAMES) {
+    const whole = request.cookies.get(name)?.value;
+    if (whole) return { name, value: whole };
+    const chunks: string[] = [];
+    for (let i = 0; ; i++) {
+      const part = request.cookies.get(`${name}.${i}`)?.value;
+      if (!part) break;
+      chunks.push(part);
     }
+    if (chunks.length > 0) return { name, value: chunks.join('') };
   }
+  return null;
+}
 
-  return false;
+/** A session cookie is present (valid or not) — used only to clear stale ones. */
+function hasSessionCookie(request: NextRequest): boolean {
+  return getSessionCookie(request) !== null;
+}
+
+/**
+ * The session cookie decrypts and verifies with AUTH_SECRET and hasn't
+ * expired. Presence alone proves nothing (anyone can send a cookie named
+ * `authjs.session-token`), so every "is this visitor signed in?" decision in
+ * the proxy uses this. Revocation is checked later by auth().
+ */
+async function decodeSession(request: NextRequest): Promise<Record<string, unknown> | null> {
+  const cookie = getSessionCookie(request);
+  const secret = process.env.AUTH_SECRET;
+  if (!cookie || !secret) return null;
+  try {
+    const payload = await decode({ token: cookie.value, secret, salt: cookie.name });
+    return payload && typeof (payload as { id?: unknown }).id === 'string' ? (payload as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function hasValidSession(request: NextRequest): Promise<boolean> {
+  return (await decodeSession(request)) !== null;
+}
+
+/** Valid AND not revoked — the full check auth() makes (one user-file read). */
+async function hasLiveSession(request: NextRequest): Promise<boolean> {
+  const payload = await decodeSession(request);
+  if (!payload) return false;
+  try {
+    return (await validateSessionClaims(payload)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function tooManyRequests(message: string, limit: number, remaining: number, resetIn: number): NextResponse {
+  return new NextResponse(
+    JSON.stringify({ success: false, error: message, retryAfter: Math.ceil(resetIn / 1000) }),
+    {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': Math.ceil(resetIn / 1000).toString(),
+        'X-RateLimit-Limit': limit.toString(),
+        'X-RateLimit-Remaining': remaining.toString(),
+        'X-RateLimit-Reset': Math.ceil(resetIn / 1000).toString(),
+      },
+    }
+  );
 }
 
 // URL prefixes of the authenticated app pages (the (dashboard) route group
@@ -98,66 +146,37 @@ const PROTECTED_PREFIXES = [
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const clientIp = getClientIp(request);
+  const clientIp = getClientIp(request.headers);
+  const isAuthenticated = await hasValidSession(request);
 
-  // Apply strict rate limiting to auth endpoints only for unauthenticated users
-  // Authenticated users making session polling requests (e.g., /api/auth/session)
-  // should not be rate-limited under the strict auth limit — use general limit instead
-  if (pathname.startsWith('/api/auth') || pathname.startsWith('/auth/')) {
-    const isAuthenticated = hasAuthSession(request);
-
-    if (!isAuthenticated) {
-      const rateLimitKey = `auth:${clientIp}`;
-      const { allowed, remaining, resetIn } = checkRateLimit(rateLimitKey, RATE_LIMIT_MAX_AUTH_UNAUTHENTICATED);
-
-      if (!allowed) {
-        return new NextResponse(
-          JSON.stringify({
-            success: false,
-            error: 'Too many requests. Please try again later.',
-            retryAfter: Math.ceil(resetIn / 1000),
-          }),
-          {
-            status: 429,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': Math.ceil(resetIn / 1000).toString(),
-              'X-RateLimit-Limit': RATE_LIMIT_MAX_AUTH_UNAUTHENTICATED.toString(),
-              'X-RateLimit-Remaining': remaining.toString(),
-              'X-RateLimit-Reset': Math.ceil(resetIn / 1000).toString(),
-            },
-          }
-        );
-      }
+  // Credential checks and sign-up are always rate limited per client, signed in
+  // or not (a signed-in user must not get unlimited password guesses against
+  // someone else's account). Other signed-out traffic to the auth surface
+  // shares the same bucket; signed-in session polling is exempt.
+  const isAuthSurface = pathname.startsWith('/api/auth') || pathname.startsWith('/auth/');
+  const isCredentialPost =
+    request.method === 'POST' && (pathname.startsWith('/api/auth/callback') || pathname.startsWith('/auth/'));
+  if (isCredentialPost || (isAuthSurface && !isAuthenticated)) {
+    const { allowed, remaining, resetIn } = checkRateLimit(`auth:${clientIp}`, RATE_LIMIT_MAX_AUTH);
+    if (!allowed) {
+      return tooManyRequests('Too many requests. Please try again later.', RATE_LIMIT_MAX_AUTH, remaining, resetIn);
     }
-    // Authenticated users' auth requests fall through to general rate limiting below
   }
 
-  // General rate limiting applies only to unauthenticated requests.
-  // Authenticated users are exempt — this is a self-hosted app where server actions
-  // (POST requests to page URLs) can easily generate hundreds of requests per minute
-  // during normal page loads with parallel data fetching.
-  const isAuthenticated = hasAuthSession(request);
-
   if (!isAuthenticated) {
-    const generalRateLimitKey = `general:${clientIp}`;
-    const generalLimit = checkRateLimit(generalRateLimitKey, RATE_LIMIT_MAX_GENERAL);
-
+    // General limit for signed-out visitors. Signed-in users are exempt: server
+    // actions (POSTs to page URLs) can legitimately burst during page loads.
+    const generalLimit = checkRateLimit(`general:${clientIp}`, RATE_LIMIT_MAX_GENERAL);
     if (!generalLimit.allowed) {
-      return new NextResponse(
-        JSON.stringify({
-          success: false,
-          error: 'Too many requests. Please slow down.',
-          retryAfter: Math.ceil(generalLimit.resetIn / 1000),
-        }),
-        {
-          status: 429,
-          headers: {
-            'Content-Type': 'application/json',
-            'Retry-After': Math.ceil(generalLimit.resetIn / 1000).toString(),
-          },
-        }
-      );
+      return tooManyRequests('Too many requests. Please slow down.', RATE_LIMIT_MAX_GENERAL, 0, generalLimit.resetIn);
+    }
+
+    // Body-size cap for signed-out server-action calls.
+    if (request.method === 'POST' && request.headers.has('next-action')) {
+      const length = Number(request.headers.get('content-length') ?? NaN);
+      if (!Number.isFinite(length) || length > MAX_UNAUTHENTICATED_ACTION_BODY) {
+        return new NextResponse('Payload too large', { status: 413 });
+      }
     }
   }
 
@@ -168,7 +187,7 @@ export async function proxy(request: NextRequest) {
   if (
     process.env.NODE_ENV !== 'production' &&
     process.env.DEV_AUTH_BYPASS &&
-    !hasAuthSession(request) &&
+    !isAuthenticated &&
     !pathname.startsWith('/dev-login') &&
     !pathname.startsWith('/api/auth') &&
     (pathname === '/' || pathname.startsWith('/auth/signin') || pathname.startsWith('/auth/signup'))
@@ -176,68 +195,41 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/dev-login', request.url));
   }
 
-  // Protect app pages - require authentication
-  // Note: This is a lightweight check based on cookie presence; the actual
-  // session validation happens server-side in auth() (the (dashboard) layout
-  // and src/app/page.tsx redirect on an invalid session). This edge check just
-  // avoids rendering page shells for obviously unauthenticated visitors.
+  // Protect app pages - require a (cryptographically valid) session. Revoked
+  // sessions still pass here; the (dashboard) layout's auth() check rejects
+  // them and redirects to sign-in, where the stale cookie is cleared below.
   const isProtectedPath =
     pathname === '/' ||
     PROTECTED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-  if (isProtectedPath && !hasAuthSession(request)) {
+  if (isProtectedPath && !isAuthenticated) {
     const signInUrl = new URL('/auth/signin', request.url);
     signInUrl.searchParams.set('callbackUrl', pathname);
     return NextResponse.redirect(signInUrl);
   }
 
-  // A session cookie on an auth page is ambiguous: it is either a stale JWT
-  // that the server-side auth() check already rejected (bounced here, and
-  // clearing it is what breaks the redirect loop), or a perfectly good
-  // session belonging to someone who just signed in.
-  //
-  // This used to assume the first and delete the cookie on sight, which made
-  // every successful sign-in destroy itself: the sign-in page calls
-  // router.refresh() straight after authenticating, that re-requests
-  // /auth/signin carrying the cookie that was just set, and this cleared it.
-  // Login looked like it silently did nothing. So verify the JWT and only
-  // clear it when it really is invalid.
+  // A session cookie on an auth page is ambiguous: it is either a stale or
+  // revoked JWT that the server-side auth() check already rejected (bounced
+  // here — clearing it is what breaks the redirect loop), or a perfectly good
+  // session belonging to someone who just signed in (the sign-in page calls
+  // router.refresh() right after authenticating, which re-requests this page
+  // with the fresh cookie; deleting it on sight made every sign-in undo
+  // itself). Decide with the same full check auth() runs — signature, expiry,
+  // sign-out revocation, account active, session version — because a JWT that
+  // merely decrypts can still be revoked, and redirecting that one to '/'
+  // would loop (/ → auth() rejects → /auth/signin → /).
   if (pathname.startsWith('/auth/signin') || pathname.startsWith('/auth/signup')) {
-    if (hasAuthSession(request)) {
-      let sessionIsValid = false;
-      try {
-        const token = await getToken({
-          req: request,
-          secret: process.env.AUTH_SECRET,
-          cookieName: sessionCookieName(),
-          secureCookie: secureCookiesEnabled(),
-        });
-        sessionIsValid = Boolean(token);
-      } catch {
-        // Fall through to clearing. Treating an unreadable token as invalid
-        // keeps the loop-breaking behaviour this block exists for; the cost
-        // is one extra sign-in, versus an unescapable loop the other way.
-        sessionIsValid = false;
-      }
-
-      if (sessionIsValid) {
-        // Already signed in — send them into the app instead of showing a
-        // sign-in form, and leave the cookie alone.
+    if (hasSessionCookie(request)) {
+      if (await hasLiveSession(request)) {
+        // Already signed in — into the app, cookie untouched.
         return NextResponse.redirect(new URL('/', request.url));
       }
-
       const response = NextResponse.next();
-      response.cookies.delete('authjs.session-token');
-      response.cookies.delete('__Secure-authjs.session-token');
-      response.cookies.delete('next-auth.session-token');
-      response.cookies.delete('__Secure-next-auth.session-token');
+      for (const name of SESSION_COOKIE_NAMES) response.cookies.delete(name);
       return response;
     }
   }
 
-  // Add security headers to the response
-  const response = NextResponse.next();
-
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {

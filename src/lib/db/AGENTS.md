@@ -6,25 +6,37 @@ File-based encrypted storage layer. No external database — all data is stored 
 
 - **Algorithm**: AES-256-GCM
 - **Key derivation**: **HKDF-SHA256** per file (a single HMAC, ~microseconds). `ENCRYPTION_KEY` is already a full-entropy 256-bit key, so PBKDF2's password-stretching iterations bought **zero** security while blocking the event loop ~50-150ms per file — and with a unique salt per file the derived-key cache almost never hit, so a cold page load (150-200 files) paid that cost 150-200×. HKDF is the correct KDF for high-entropy input key material; this is not a security regression.
+- **Tag length pinned**: the decipher is created with `authTagLength: 16` and rejects shorter tags (a truncated file can't be accepted with a weaker tag).
 - **Per-file security**: each file gets a random 64-byte salt and 16-byte IV (HKDF derives a distinct per-file key from `ENCRYPTION_KEY` + salt, so identical plaintext still yields distinct ciphertext).
-- **Backward-compatible reads**: the file format (`salt + iv + authTag + ciphertext`, base64) is unchanged, so old and new files are byte-identical in shape — only the derivation differs. `decrypt()` tries HKDF first and, on GCM auth failure, falls back to the legacy `pbkdf2Sync(…, 100000, …, 'sha512')` key. GCM authentication makes the key choice unambiguous (forging a tag is infeasible); the wasted HKDF attempt on a legacy file costs microseconds. New writes always use HKDF.
-- **Migration** (`scripts/reencrypt-data.mjs`): one-shot walk of `DATA_DIR` that decrypts (compat reader) → re-encrypts (HKDF) → atomic temp+rename per file. Idempotent, never deletes; `--dry-run` reports counts. Reads `ENCRYPTION_KEY` from env or `<DATA_DIR>/.encryption_key`. Run once after deploy (backup first) so every read hits the fast path; correctness does not depend on it (reads stay backward-compatible).
-- **Storage format**: Base64-encoded string containing `salt + iv + authTag + ciphertext`
+- **Format v2 (all writes)**: `"sv2:" + base64(salt + iv + authTag + ciphertext)`, key = HKDF(`sampolio-file-encryption-v2`), and the file's DATA_DIR-relative `/`-separated path (`dataRelativePath`) authenticated as GCM associated data. `writeEncryptedFile` → `encryptForPath(json, finalPath)` (bound to the final path, not the atomic-write temp file); `readEncryptedFile` → `decryptForPath(content, path)`. A file copied to any other path fails authentication.
+- **Backward-compatible reads (v1)**: unprefixed `base64(salt + iv + authTag + ciphertext)`. `decrypt()` tries HKDF (`sampolio-file-encryption-v1`) first and, on GCM auth failure, falls back to the legacy `pbkdf2Sync(…, 100000, …, 'sha512')` key. Refused when `ENCRYPTION_REQUIRE_PATH_BINDING=true`. A v1 file upgrades to v2 on its next write.
+- **Migration** (`scripts/reencrypt-data.mjs`, format code shared via `scripts/lib-file-crypto.mjs`): walks `DATA_DIR`, decrypts any format, re-encrypts as v2, atomic 0600 temp+fsync+rename per file. Idempotent, never deletes; `--dry-run` reports counts per source format. Procedure (and the pre-4.0 rollback caveat): `docs/operations.md` §8. `file-format-v2.test.ts` keeps the scripts' implementation byte-compatible with this file.
 - **Key source**: `ENCRYPTION_KEY` environment variable (64-char hex string). **Missing key is a hard failure in production** (throws on first use); development falls back to a known default with a console warning.
-- **Key rotation** (`scripts/rotate-encryption-key.mjs`): decrypts with `OLD_ENCRYPTION_KEY` (HKDF + PBKDF2 fallback), re-encrypts with the new `ENCRYPTION_KEY`; refuses identical keys, `--dry-run` supported, resumable. See `docs/operations.md` §8.
+- **Key rotation** (`scripts/rotate-encryption-key.mjs`): decrypts with `OLD_ENCRYPTION_KEY` (any format), re-encrypts as v2 with the new `ENCRYPTION_KEY`; refuses identical keys, `--dry-run` supported, resumable. See `docs/operations.md` §8.
 - **Performance**: LRU cache (max 500 entries) retained for the legacy PBKDF2 fallback keys only (HKDF is fast enough to skip caching). See `encryption.test.ts` for round-trip + legacy-compat coverage.
 
 ### Core Functions
 
 ```typescript
 readEncryptedFile<T>(filePath: string): Promise<T>
-writeEncryptedFile<T>(filePath: string, data: T): Promise<void>
+writeEncryptedFile<T>(filePath: string, data: T): Promise<void> // atomic: 0600 temp + fsync + rename
+updateEncryptedFile<T>(filePath, mutate): Promise<T>            // locked read-modify-write of one file
+withFileLock(key, fn) / serialized(lockKeyOf, fn)              // in-process lock (globalThis table; not reentrant)
+assertSafeId(id, what?) / isSafeId(id)                         // ^[A-Za-z0-9_-]{1,64}$ — use in EVERY path builder
+assertInsideDataDir(path)                                      // called by every I/O helper below
 getDataDir(): string              // ~/.sampolio/data/ or custom
-getUserDir(userId: string): string // ~/.sampolio/data/users/{userId}
-ensureDir(dir: string): Promise<void>
-listFiles(dir: string): Promise<string[]>
+getUserDir(userId: string): string // ~/.sampolio/data/users/{userId} (validates userId)
+ensureDir(dir: string): Promise<void> // mkdir 0700
+listFiles(dir: string): Promise<string[]> // hides *.tmp
 deleteFile(filePath: string): Promise<void>
 ```
+
+**Rules for new DB code**: build every path through a `getXFile(…)` helper that wraps each
+client-supplied id in `assertSafeId` (record ids reach these functions straight from server
+actions — `../` would otherwise escape into another user's directory). Do read-modify-write
+of a shared or aggregate file through `updateEncryptedFile` or a `serialized(...)` wrapper
+keyed on that file/directory, and never call another function serialized on the same key from
+inside one. `revoked-sessions.ts` keeps signed-out session ids (see `docs/architecture.md` §9).
 
 ## Data Directory Structure
 
@@ -134,5 +146,5 @@ After mutations, server actions call `updateTag(tagName)` to invalidate.
 
 ## Known Limitations
 
-- **No file locking**: Concurrent read-modify-write operations can cause data loss. Acceptable for single-user scenarios.
-- **No transactions**: Operations are not atomic — a crash mid-write could corrupt a file.
+- **In-process locks only**: `withFileLock` serializes writers inside one `next start` process. There is no cross-process locking, so a second process (a maintenance script while the app runs, or two app instances) can still lose updates. Per-record entity files (one file per account/goal/…) are not locked; two simultaneous edits of the same record keep the last one. Bank files rely on the sync engine's per-connection lock.
+- **No multi-file transactions**: each file write is atomic, but an operation that rewrites several files (e.g. a mortgage plus its member index) can stop between them on a crash.

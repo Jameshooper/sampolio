@@ -21,6 +21,7 @@ import {
     type ChartTourStep,
 } from '@/components/ui/chart-explain';
 import type { MonthFlowData, CashflowItem, Currency } from '@/types';
+import { escapeHtml } from '@/lib/html-escape';
 
 echarts.use([SankeyChart, TooltipComponent, CanvasRenderer]);
 
@@ -437,11 +438,11 @@ export function MonthlyFlowChart({
                         const name = params.name as string;
                         const value = params.value as number;
                         const m = metaMap.get(name);
-                        let html = `<strong>${cleanNodeName(name)}</strong><br/>${formatCurrency(value, currency)}`;
+                        let html = `<strong>${escapeHtml(cleanNodeName(name))}</strong><br/>${formatCurrency(value, currency)}`;
                         if (m && m.items.length > 1) {
                             html += '<br/><br/>';
                             m.items.slice(0, 8).forEach(item => {
-                                html += `${item.name}: ${formatCurrency(item.amount, currency)}<br/>`;
+                                html += `${escapeHtml(item.name)}: ${formatCurrency(item.amount, currency)}<br/>`;
                             });
                             if (m.items.length > 8) {
                                 html += `+${m.items.length - 8} more`;
@@ -451,7 +452,7 @@ export function MonthlyFlowChart({
                     }
                     if (params.dataType === 'edge') {
                         const d = params.data as { source: string; target: string; value: number };
-                        return `${cleanNodeName(d.source)} → ${cleanNodeName(d.target)}<br/>${formatCurrency(d.value, currency)}`;
+                        return `${escapeHtml(cleanNodeName(d.source))} → ${escapeHtml(cleanNodeName(d.target))}<br/>${formatCurrency(d.value, currency)}`;
                     }
                     return '';
                 },

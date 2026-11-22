@@ -9,25 +9,45 @@ import {
   deleteAccount as dbDeleteAccount,
 } from '@/lib/db/accounts';
 import { cachedGetAccounts, cachedGetAccountById } from '@/lib/db/cached';
+import { getMonthsBetween } from '@/lib/projection';
 import { updateTag } from 'next/cache';
 import type { ApiResponse, FinancialAccount } from '@/types';
+
+// A real calendar month (01–12), not just any two digits.
+const yearMonthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Invalid date format (YYYY-MM)');
+
+/** Same 50-year ceiling as planningHorizonMonths: a custom end date further
+ * out would make every projection build millions of months. */
+const MAX_CUSTOM_HORIZON_MONTHS = 600;
+
+function customEndDateError(startingDate: string, customEndDate: string | null | undefined): string | null {
+  if (!customEndDate) return null;
+  if (customEndDate < startingDate) return 'The end date must be after the start date';
+  if (getMonthsBetween(startingDate, customEndDate) > MAX_CUSTOM_HORIZON_MONTHS) {
+    return 'The end date must be within 50 years of the start date';
+  }
+  return null;
+}
 
 const createAccountSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   currency: z.enum(CURRENCY_VALUES),
   startingBalance: z.number(),
-  startingDate: z.string().regex(/^\d{4}-\d{2}$/, 'Invalid date format (YYYY-MM)'),
+  startingDate: yearMonthSchema,
   planningHorizonMonths: z.number().min(1).max(600),
-  customEndDate: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  customEndDate: yearMonthSchema.optional(),
+}).superRefine((d, ctx) => {
+  const error = customEndDateError(d.startingDate, d.customEndDate);
+  if (error) ctx.addIssue({ code: 'custom', path: ['customEndDate'], message: error });
 });
 
 const updateAccountSchema = z.object({
   name: z.string().min(1).optional(),
   currency: z.enum(CURRENCY_VALUES).optional(),
   startingBalance: z.number().optional(),
-  startingDate: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  startingDate: yearMonthSchema.optional(),
   planningHorizonMonths: z.number().min(1).max(600).optional(),
-  customEndDate: z.string().regex(/^\d{4}-\d{2}$/).optional().nullable(),
+  customEndDate: yearMonthSchema.optional().nullable(),
   isArchived: z.boolean().optional(),
 });
 
@@ -98,6 +118,13 @@ export async function updateAccount(
     }
 
     const parsedData = updateAccountSchema.parse(data);
+    if (parsedData.customEndDate || parsedData.startingDate) {
+      const existing = await cachedGetAccountById(session.user.id, accountId);
+      if (!existing) return { success: false, error: 'Account not found' };
+      const endDate = parsedData.customEndDate === undefined ? existing.customEndDate : parsedData.customEndDate;
+      const error = customEndDateError(parsedData.startingDate ?? existing.startingDate, endDate);
+      if (error) return { success: false, error };
+    }
     const updateData = {
       ...parsedData,
       customEndDate: parsedData.customEndDate ?? undefined,

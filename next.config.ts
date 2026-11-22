@@ -23,6 +23,8 @@ const forceHttps = process.env.DISABLE_TLS_HEADERS !== 'true';
 // third-party page still cannot frame this app.
 const allowFraming = process.env.ALLOW_IFRAME_EMBED === 'true';
 
+const isDev = process.env.NODE_ENV !== 'production';
+
 const securityHeaders = [
   // Prevent clickjacking. Dropped only for the Ingress build, where CSP's
   // frame-ancestors 'self' (below) carries the same protection in a form
@@ -62,7 +64,11 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Required for Next.js
+      // 'unsafe-inline' is still required for Next's inline RSC/bootstrap
+      // scripts (no per-request nonce: pages are partially prerendered).
+      // 'unsafe-eval' is only needed by the dev server's React Refresh.
+      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
+      "object-src 'none'",
       "worker-src 'self'", // Service worker (PWA)
       "style-src 'self' 'unsafe-inline'", // Required for PrimeReact
       "img-src 'self' data: blob:",

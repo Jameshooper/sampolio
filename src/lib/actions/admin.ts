@@ -12,6 +12,7 @@ import {
   toPublicUser,
 } from '@/lib/db/users';
 import { avatarDataUriSchema, avatarDataUriToBuffer } from '@/lib/schemas/user.schema';
+import { passwordPolicySchema } from '@/lib/schemas/auth.schema';
 import { updateAppSettings as dbUpdateAppSettings } from '@/lib/db/app-settings';
 import { cachedGetAllUsers, cachedGetAppSettings } from '@/lib/db/cached';
 import { updateTag } from 'next/cache';
@@ -19,7 +20,7 @@ import type { ApiResponse, PublicUser, AppSettings } from '@/types';
 
 const createUserSchema = z.object({
   email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  password: passwordPolicySchema,
   name: z.string().min(2, 'Name must be at least 2 characters'),
   role: z.enum(['admin', 'user']),
 });
@@ -27,7 +28,7 @@ const createUserSchema = z.object({
 const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
   email: z.string().email().optional(),
-  password: z.string().min(6).optional(),
+  password: passwordPolicySchema.optional(),
   role: z.enum(['admin', 'user']).optional(),
   isActive: z.boolean().optional(),
   // Present ⇒ set the avatar (data URI) or remove it (null); absent ⇒ untouched.

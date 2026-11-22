@@ -28,6 +28,10 @@ export interface User {
   // counter busts the browser HTTP cache (?v=) and is bumped on every change;
   // undefined ⇒ no avatar. Never carried in the JWT.
   avatarVersion?: number;
+  // Bumped whenever existing sessions must stop working (password change,
+  // deactivation, deletion, role change). A JWT carrying a different value is
+  // rejected by the auth `jwt` callback. Undefined ⇒ 0.
+  sessionVersion?: number;
   createdAt: string;
   updatedAt: string;
 }

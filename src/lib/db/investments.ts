@@ -15,6 +15,7 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 function getInvestmentsDir(userId: string): string {
@@ -22,15 +23,15 @@ function getInvestmentsDir(userId: string): string {
 }
 
 function getInvestmentFile(userId: string, investmentId: string): string {
-  return path.join(getInvestmentsDir(userId), `${investmentId}.enc`);
+  return path.join(getInvestmentsDir(userId), `${assertSafeId(investmentId)}.enc`);
 }
 
 function getContributionsDir(userId: string, investmentId: string): string {
-  return path.join(getInvestmentsDir(userId), investmentId, 'contributions');
+  return path.join(getInvestmentsDir(userId), assertSafeId(investmentId), 'contributions');
 }
 
 function getContributionFile(userId: string, investmentId: string, contributionId: string): string {
-  return path.join(getContributionsDir(userId, investmentId), `${contributionId}.enc`);
+  return path.join(getContributionsDir(userId, investmentId), `${assertSafeId(contributionId)}.enc`);
 }
 
 // ============================================================

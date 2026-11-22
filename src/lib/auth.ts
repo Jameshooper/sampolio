@@ -1,14 +1,34 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { z } from 'zod';
-import { findUserByEmail, verifyPassword, recordFailedLogin, recordSuccessfulLogin, isAccountLocked } from '@/lib/db/users';
+import { randomUUID, createHash } from 'crypto';
+import {
+  findUserByEmail,
+  verifyPassword,
+  verifyDummyPassword,
+  recordFailedLogin,
+  recordSuccessfulLogin,
+  isAccountLocked,
+} from '@/lib/db/users';
+import { revokeSession } from '@/lib/db/revoked-sessions';
+import { validateSessionClaims } from '@/lib/session-validation';
+import { getClientIp } from '@/lib/client-ip';
 import { sessionCookieName, secureCookiesEnabled } from '@/lib/auth-cookies';
 import type { UserRole } from '@/types';
 
+// Any non-empty password is checked (and counted against the lockout). The
+// strength policy applies where passwords are set, not where they are tried.
 const signInSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  email: z.string().email('Invalid email address').max(320),
+  password: z.string().min(1).max(1024),
 });
+
+export const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days, rolling
+
+/** Short, non-reversible tag for log lines (no raw email addresses in logs). */
+export function logTag(email: string): string {
+  return createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 10);
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   pages: {
@@ -17,7 +37,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
   session: {
     strategy: 'jwt',
-    maxAge: 24 * 60 * 60 * 30, // 30 days
+    maxAge: SESSION_MAX_AGE_SECONDS,
     updateAge: 60 * 60, // Update session every hour
   },
   cookies: {
@@ -33,6 +53,25 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       },
     },
   },
+  logger: {
+    // A wrong password is routine; don't print a stack trace per attempt.
+    error(error) {
+      // Match on Auth.js's stable `type`; class names are minified in builds.
+      if ((error as { type?: string }).type === 'CredentialsSignin' || error.name === 'CredentialsSignin') return;
+      console.error('[auth][error]', error);
+    },
+  },
+  events: {
+    async signOut(message) {
+      // Signing out deletes the cookie; also revoke the session id so a copied
+      // cookie stops working immediately.
+      const token = 'token' in message ? message.token : null;
+      const sid = token?.sid;
+      if (typeof sid === 'string') {
+        await revokeSession(sid, SESSION_MAX_AGE_SECONDS * 1000);
+      }
+    },
+  },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
@@ -40,8 +79,21 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.email = user.email;
         token.name = user.name;
         token.role = (user as { role?: UserRole }).role || 'user';
+        token.sid = randomUUID();
+        token.sv = (user as { sessionVersion?: number }).sessionVersion ?? 0;
         token.iat = Math.floor(Date.now() / 1000);
+        return token;
       }
+
+      // Every later request re-validates against the stored account, so
+      // deactivation, deletion, role changes, password changes and sign-out
+      // take effect immediately instead of when the JWT expires. Returning
+      // null clears the session cookie.
+      const current = await validateSessionClaims(token);
+      if (!current) return null;
+      token.role = current.role;
+      token.name = current.name;
+      token.email = current.email;
       return token;
     },
     async session({ session, token }) {
@@ -61,78 +113,74 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
       },
-      async authorize(credentials) {
-        // Every branch below logs exactly one reason, always prefixed
-        // [auth], so a failed sign-in is diagnosable from the add-on log
-        // alone. Never log the password, or anything derived from it.
-        let email = '<unparsed>';
+      async authorize(credentials, request) {
+        // Every branch logs exactly one reason, prefixed [auth], so a failed
+        // sign-in is diagnosable from the server/add-on log alone. Lines carry
+        // a hashed user tag (logTag) — never the email or anything derived
+        // from the password. The reason is for the operator only; the
+        // browser always gets the same generic failure.
+        let tag = '<unparsed>';
         try {
           const parsed = signInSchema.safeParse(credentials);
           if (!parsed.success) {
-            // Previously this threw into the catch below and surfaced as a
-            // generic "Auth error", which looked identical to a server fault.
             console.warn(
               `[auth] Rejected sign-in: credentials failed validation (${parsed.error.issues
-                .map((i) => `${i.path.join('.') || 'value'}: ${i.message}`)
-                .join('; ')})`
+                .map((i) => i.path.join('.') || 'value')
+                .join(', ')})`
             );
             return null;
           }
-          email = parsed.data.email;
-          const { password } = parsed.data;
-          console.log(`[auth] Login attempt for: ${email}`);
+          const { email, password } = parsed.data;
+          const ip = getClientIp(request.headers);
+          tag = logTag(email);
 
-          // Check if account is locked due to too many failed attempts
-          const locked = await isAccountLocked(email);
-          if (locked) {
+          if (await isAccountLocked(email, ip)) {
             console.warn(
-              `[auth] Rejected sign-in for ${email}: account is temporarily locked after repeated failed attempts. ` +
-                `Wait for the lockout to expire, or clear it with the add-on's reset_admin_password option.`
+              `[auth] Rejected sign-in user=${tag}: temporarily locked after repeated failed attempts. ` +
+                `Wait for the lockout to expire, or restart the app/add-on (the counters are in memory).`
             );
             return null;
           }
 
           const user = await findUserByEmail(email);
-          if (!user) {
+          if (!user || !user.isActive) {
+            // Same bcrypt cost as a real check, so timing doesn't reveal
+            // whether the email has an (active) account.
+            await verifyDummyPassword(password);
+            await recordFailedLogin(email, ip);
             console.warn(
-              `[auth] Rejected sign-in for ${email}: no such user in this data directory. ` +
-                `If the account should exist, ENCRYPTION_KEY likely differs from the one it was created with.`
+              user
+                ? `[auth] Rejected sign-in user=${tag}: account is deactivated.`
+                : `[auth] Rejected sign-in user=${tag}: no such user in this data directory. ` +
+                    `If the account should exist, ENCRYPTION_KEY likely differs from the one it was created with.`
             );
-            // Record failed attempt even for non-existent users to prevent enumeration
-            await recordFailedLogin(email);
-            return null;
-          }
-
-          // Check if user is active
-          if (!user.isActive) {
-            console.warn(`[auth] Rejected sign-in for ${email}: account is deactivated.`);
             return null;
           }
 
           const isValid = await verifyPassword(user, password);
           if (!isValid) {
+            await recordFailedLogin(email, ip);
             console.warn(
-              `[auth] Rejected sign-in for ${email}: password does not match the stored hash. ` +
-                `The account exists and decrypted fine, so this is the password itself.`
+              `[auth] Rejected sign-in user=${tag}: password does not match the stored hash ` +
+                `(the account exists and decrypted fine).`
             );
-            await recordFailedLogin(email);
             return null;
           }
 
-          // Record successful login
-          await recordSuccessfulLogin(email);
-          console.log(`[auth] Sign-in succeeded for: ${email}`);
+          await recordSuccessfulLogin(email, ip);
+          console.log(`[auth] Sign-in succeeded user=${tag}`);
 
           return {
             id: user.id,
             email: user.email,
             name: user.name,
             role: user.role,
+            sessionVersion: user.sessionVersion ?? 0,
           };
         } catch (error) {
           console.error(
-            `[auth] Sign-in for ${email} failed with an unexpected error:`,
-            error instanceof Error ? error.message : error
+            `[auth] Sign-in user=${tag} failed with an unexpected error:`,
+            error instanceof Error ? error.message : 'unknown'
           );
           return null;
         }
@@ -155,7 +203,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 return null;
               }
               console.warn(`[auth] ⚠️  DEV AUTH BYPASS active — signing in as ${email} without a password.`);
-              return { id: user.id, email: user.email, name: user.name, role: user.role };
+              return { id: user.id, email: user.email, name: user.name, role: user.role, sessionVersion: user.sessionVersion ?? 0 };
             },
           }),
         ]

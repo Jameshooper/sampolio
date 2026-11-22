@@ -17,6 +17,7 @@ import { formatCurrency, formatYearMonth, formatYearMonthShort } from '@/lib/con
 import { ChartExplain, type ReadCue } from '@/components/ui/chart-explain';
 import { describeScenario } from '@/lib/chart-descriptions';
 import type { MonthlyProjection, Currency } from '@/types';
+import { escapeHtml } from '@/lib/html-escape';
 
 echarts.use([
     LineChart,
@@ -71,7 +72,7 @@ export function ScenarioComparisonChart({ current, modified, currency }: Scenari
                     const idx = params[0].dataIndex;
                     const cur = current[idx]?.endingBalance;
                     const mod = modified[idx]?.endingBalance;
-                    let html = `<strong>${formatYearMonth(params[0].axisValue)}</strong>`;
+                    let html = `<strong>${escapeHtml(formatYearMonth(params[0].axisValue))}</strong>`;
                     if (typeof cur === 'number') {
                         html += `<br/><span style="color:${BLUE}">●</span> Current: ${formatCurrency(cur, currency)}`;
                     }

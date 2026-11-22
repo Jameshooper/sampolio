@@ -97,12 +97,13 @@ A self-hosted personal finance planner that replaces budgeting spreadsheets with
 - **Cache Management**: Force revalidation of all caches from settings
 
 ### Security & Privacy
-- **File-Based Encrypted Storage**: Financial data is encrypted with AES-256-GCM using HKDF-SHA256 key derivation, and stays on your server (avatar images are stored unencrypted)
-- **Password Security**: bcrypt hashing (12 rounds), strong password requirements (8+ chars, mixed case, numbers, special chars)
-- **Brute Force Protection**: Account lockout after 10 failed attempts within 15 minutes (held in memory, so a restart clears it)
-- **Rate Limiting**: Edge middleware caps unauthenticated auth requests (20/min) and general requests (300/min) per IP
-- **Security Headers**: Content-Security-Policy, `X-Frame-Options: DENY`, `X-Content-Type-Options`, a restricted permissions policy, and HSTS where TLS is terminated in front (the Docker image and Home Assistant add-on omit HSTS, as they serve plain HTTP)
-- **Self-Hosted**: Deploy by cloning and building on your own server, as a Docker container, or as a Home Assistant add-on — no external database needed
+- **File-Based Encrypted Storage**: AES-256-GCM encryption with HKDF-SHA256 key derivation — your data stays on your server. Writes are atomic (temp file + rename), files are private (0600/0700), and record ids are validated so no request can reach a file outside its own records
+- **Password Security**: bcrypt hashing (12 rounds), one strong password policy for sign-up, admin-created users and changes (8+ chars, mixed case, numbers, special chars)
+- **Sessions**: every request re-checks the account, so deactivation, deletion, role changes, password changes and sign-out end sessions immediately
+- **Brute Force Protection**: 10 failed attempts from one client (or 50 from anywhere) within 15 minutes lock that sign-in for 15 minutes; failed logins take the same time whether or not the account exists
+- **Rate Limiting**: the proxy caps credential checks and sign-up (20/min) and signed-out requests (300/min) per client IP, using only trusted proxy hops (`TRUSTED_PROXY_HOPS`)
+- **Security Headers**: Content-Security-Policy (no `unsafe-eval` in production), `X-Frame-Options: DENY`, `X-Content-Type-Options`, a restricted permissions policy, and HSTS where TLS is terminated in front (the Docker image and Home Assistant add-on omit HSTS, as they serve plain HTTP); user-supplied text is escaped in chart tooltips
+- **Self-Hosted**: Deploy by cloning and building on your own server, as a Docker container, or as a Home Assistant add-on — no external database needed (avatar images are the one thing stored unencrypted)
 
 ## Getting Started
 
@@ -210,7 +211,7 @@ All data is stored as individually encrypted JSON files in `~/.sampolio/data/` (
 
 > **Note**: A mortgage is the one entity shared by multiple users, so it lives under `shared/` rather than under a single user. Access control is enforced in the action layer by checking the requester against the mortgage's member list.
 
-**Encryption**: AES-256-GCM with per-file HKDF-SHA256 key derivation (fast). Each file has its own random salt and IV. Files written before the HKDF migration are still readable via a backward-compatible PBKDF2 fallback (100,000 iterations, LRU-cached); `scripts/reencrypt-data.mjs` migrates them to the fast format.
+**Encryption**: AES-256-GCM with per-file HKDF-SHA256 key derivation and a random salt and IV per write. Each file is bound to its path (GCM associated data), so an encrypted file copied over another user's file won't decrypt. Older files (no path binding, or the legacy PBKDF2 derivation) stay readable and upgrade on their next write; `scripts/reencrypt-data.mjs` upgrades them all at once (see [`docs/operations.md`](docs/operations.md) §8).
 
 ### Caching Strategy
 
@@ -349,13 +350,18 @@ Then run normally:
 **Alternative: Auto-Generated Secrets**
 
 If you don't provide a `.env` file, secrets are auto-generated on first run:
-- `AUTH_SECRET`: Stored in `~/.sampolio/data/.auth_secret`
-- `ENCRYPTION_KEY`: Stored in `~/.sampolio/data/.encryption_key`
+- `AUTH_SECRET`: Stored in `~/.sampolio/secrets/auth_secret`
+- `ENCRYPTION_KEY`: Stored in `~/.sampolio/secrets/encryption_key`
+
+They are kept outside the data directory so a copy of the data doesn't carry the key;
+back the key up separately. Installs that already have `~/.sampolio/data/.auth_secret`
+/ `.encryption_key` keep working (see [`docs/operations.md`](docs/operations.md) §6 to
+move them).
 
 **Optional Environment Variables** (in .env or as exports):
 ```bash
 SAMPOLIO_PORT=3999                    # Server port (default: 3999)
-SAMPOLIO_HOST=0.0.0.0                # Server host (default: 0.0.0.0)
+SAMPOLIO_HOST=127.0.0.1              # Bind address (default: 127.0.0.1; 0.0.0.0 exposes it on the LAN)
 SAMPOLIO_DATA_DIR=~/.sampolio/data   # Data directory
 ```
 
@@ -381,8 +387,8 @@ tar -xzf ~/sampolio-backup.tar.gz
 
 **Method 2: Using auto-generated secrets**:
 ```bash
-# On source server, backup secrets and data
-tar -czf sampolio-backup.tar.gz -C ~/.sampolio data
+# On source server, backup secrets and data (keep this archive private — it holds the key)
+tar -czf sampolio-backup.tar.gz -C ~/.sampolio data secrets
 
 # Transfer to new server
 scp sampolio-backup.tar.gz new-server:~/
@@ -392,7 +398,7 @@ cd ~
 mkdir -p .sampolio
 tar -xzf sampolio-backup.tar.gz -C .sampolio
 
-# Build, then run - will use existing .auth_secret and .encryption_key files
+# Build, then run - will use the existing secrets/ (or legacy data/.encryption_key) files
 cd ~/sampolio
 ./scripts/server-deploy.sh && ./scripts/run-sampolio.sh
 ```
@@ -442,7 +448,14 @@ open http://localhost:3999
 The repo root includes a real `Dockerfile` (multi-stage: `pnpm install` +
 `pnpm build`, then `next start` via `run.sh`) and `.dockerignore`. It builds
 the app the same way [`scripts/server-deploy.sh`](scripts/server-deploy.sh)
-does — no `output: 'standalone'`, see the comment in `next.config.ts`.
+does — no `output: 'standalone'`, see the comment in `next.config.ts`. The base
+image is pinned by digest, `.dockerignore` keeps `.env*`, `data/`, `.git` and local
+build output out of the build context (so secrets and financial data never land in
+image layers), and CI builds the image and smoke-tests the container on every push.
+Inside the container `next start` listens on loopback only, behind
+`ha-ingress-proxy.mjs`, which overwrites `X-Forwarded-For` with the real peer, so
+the default `TRUSTED_PROXY_HOPS=1` is correct here. The container runs as root
+(the Home Assistant Supervisor convention: `/data` and `/ssl` are root-owned).
 
 ```bash
 docker build -t sampolio .
@@ -488,12 +501,14 @@ switches and the optional public bank-callback path are in
 | `AUTH_URL` | The address the app is opened at. Its scheme decides the session cookie: `https://` ⇒ `Secure`, explicit `http://` ⇒ not | Yes (Docker / add-on) | - |
 | `DATA_DIR` / `SAMPOLIO_DATA_DIR` | Custom data directory path | No | `~/.sampolio/data` |
 | `PORT` / `SAMPOLIO_PORT` | Server port | No | `3999` |
-| `HOSTNAME` / `SAMPOLIO_HOST` | Server hostname | No | `0.0.0.0` |
+| `HOSTNAME` / `SAMPOLIO_HOST` | Bind address for the launch scripts (`0.0.0.0` exposes the app on the LAN, bypassing the reverse proxy) | No | `127.0.0.1` |
+| `TRUSTED_PROXY_HOPS` | Reverse proxies in front of the app; the client IP used for rate limiting and login lockout is read from that many `X-Forwarded-For` entries from the right. `0` = no proxy (header ignored) | No | `1` |
+| `SAMPOLIO_SECRETS_DIR` | Where the launch scripts keep generated `AUTH_SECRET` / `ENCRYPTION_KEY` files | No | `~/.sampolio/secrets` |
 | `ENABLE_BANKING_APP_ID` | Enable Banking application ID (bank sync) | No | - |
 | `ENABLE_BANKING_REDIRECT_URL` | Consent callback URL (`<public-url>/api/bank/callback`) | No | - |
 | `ENABLE_BANKING_PRIVATE_KEY_FILE` | Path to the RS256 private key PEM (0600, outside the repo) | No | - |
 
-*Auto-generated and saved by `scripts/run-sampolio.sh` if not provided; the `SAMPOLIO_*` aliases are also read only by that script and `install-launchd.sh`. The Docker image and Home Assistant add-on generate nothing: they refuse to start without `AUTH_SECRET`, `ENCRYPTION_KEY` and `AUTH_URL`. Using fixed values is recommended everywhere. The complete list of variables the code reads is in [`docs/operations.md`](docs/operations.md) §9.
+*Auto-generated by `scripts/run-sampolio.sh` / `install-launchd.sh` into `~/.sampolio/secrets/` (outside the data directory, so data backups don't carry the key) if not provided; an existing `<data dir>/.encryption_key` from older installs is still read, and the scripts refuse to generate a new `ENCRYPTION_KEY` when encrypted data already exists. The `SAMPOLIO_*` aliases are also read only by those scripts. The Docker image and Home Assistant add-on generate nothing: they refuse to start without `AUTH_SECRET`, `ENCRYPTION_KEY` and `AUTH_URL`. Using fixed values is recommended everywhere, and back the key up separately from the data. The complete list of variables the code reads is in [`docs/operations.md`](docs/operations.md) §9.
 
 > **Bank sync** is fully optional. Leave the three `ENABLE_BANKING_*` variables unset and the feature hard-disables itself (no network calls, a "not configured" notice in Settings). When set, the consent callback URL must be publicly reachable.
 
@@ -508,7 +523,7 @@ switches and the optional public bank-callback path are in
 - **Forms**: React Hook Form + Zod validation
 - **Charts**: ECharts (via echarts-for-react), Chart.js
 - **Date Handling**: date-fns
-- **Encryption**: Node.js crypto (AES-256-GCM, HKDF-SHA256 with a legacy PBKDF2 read fallback)
+- **Encryption**: Node.js crypto (AES-256-GCM, HKDF-SHA256, path-bound associated data; legacy PBKDF2 read fallback)
 - **Password Hashing**: bcryptjs
 - **Bank Sync**: Enable Banking (PSD2 AIS) via `jose` (RS256 JWT) — optional, read-only
 - **IDs**: uuid v14

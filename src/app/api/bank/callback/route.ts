@@ -14,19 +14,28 @@ import type { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth';
 import { completeConnection } from '@/lib/bank/connect';
 import { redactBankError } from '@/lib/bank/client';
+import { getClientIp } from '@/lib/client-ip';
 
 /**
  * The canonical external origin to build redirects against. Behind Caddy /
  * Cloudflare the raw `request.url` is the internal bind address (0.0.0.0:3999),
- * which isn't reachable by the user's browser — so prefer AUTH_URL (the app's
- * public URL), then the forwarded host, then the raw request as a last resort.
+ * which isn't reachable by the user's browser. Only configured values are used
+ * — AUTH_URL, else the origin of ENABLE_BANKING_REDIRECT_URL (always set when
+ * bank sync is enabled, and by definition this callback's public URL) — never
+ * request headers, which a client or misconfigured proxy can forge.
  */
 function externalBase(request: NextRequest): string {
   const fromEnv = process.env.AUTH_URL?.trim().replace(/\/$/, '');
   if (fromEnv) return fromEnv;
-  const proto = request.headers.get('x-forwarded-proto') ?? 'https';
-  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host');
-  return host ? `${proto}://${host}` : request.nextUrl.origin;
+  const redirectUrl = process.env.ENABLE_BANKING_REDIRECT_URL?.trim();
+  if (redirectUrl) {
+    try {
+      return new URL(redirectUrl).origin;
+    } catch {
+      // fall through
+    }
+  }
+  return request.nextUrl.origin;
 }
 
 function redirect(request: NextRequest, path: string): NextResponse {
@@ -52,10 +61,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return redirect(request, '/settings?bankError=missing_params');
   }
 
-  const psuIp =
-    request.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
-    request.headers.get('x-real-ip') ??
-    undefined;
+  // Only the address added by our own trusted proxy (see src/lib/client-ip.ts).
+  const clientIp = getClientIp(request.headers);
+  const psuIp = clientIp === 'direct' ? undefined : clientIp;
   const psuUserAgent = request.headers.get('user-agent') ?? undefined;
 
   try {

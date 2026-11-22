@@ -12,14 +12,15 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 function getPlannedItemsDir(userId: string, accountId: string): string {
-  return path.join(getUserDir(userId), 'accounts', accountId, 'planned');
+  return path.join(getUserDir(userId), 'accounts', assertSafeId(accountId), 'planned');
 }
 
 function getPlannedItemFile(userId: string, accountId: string, itemId: string): string {
-  return path.join(getPlannedItemsDir(userId, accountId), `${itemId}.enc`);
+  return path.join(getPlannedItemsDir(userId, accountId), `${assertSafeId(itemId)}.enc`);
 }
 
 export async function getPlannedItems(userId: string, accountId: string): Promise<PlannedItem[]> {

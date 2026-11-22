@@ -3,8 +3,9 @@
 import { z } from 'zod';
 import { CURRENCY_VALUES } from '@/lib/constants';
 import { auth } from '@/lib/auth';
+import { isSafeId } from '@/lib/db/encryption';
+import { resolveMemberByEmail } from '@/lib/member-lookup-limit';
 import { updateTag } from 'next/cache';
-import { findUserByEmail } from '@/lib/db/users';
 import {
   createMortgage as dbCreateMortgage,
   updateMortgage as dbUpdateMortgage,
@@ -143,6 +144,7 @@ async function loadMortgageForMember(
 ): Promise<LoadResult> {
   const session = await auth();
   if (!session?.user?.id) return { ok: false, error: 'Unauthorized' };
+  if (!isSafeId(mortgageId)) return { ok: false, error: 'Mortgage not found' };
   const mortgage = await cachedGetMortgageById(mortgageId);
   if (!mortgage) return { ok: false, error: 'Mortgage not found' };
   const me = mortgage.members.find((m) => m.userId === session.user.id);
@@ -248,10 +250,9 @@ export async function createMortgage(
     // Resolve partner emails → members
     const resolved: MortgageMember[] = [];
     for (const m of validated.members ?? []) {
-      const user = await findUserByEmail(m.email);
-      if (!user || !user.isActive) {
-        return { success: false, error: `No active account for ${m.email}` };
-      }
+      const found = await resolveMemberByEmail(session.user.id, m.email);
+      if (!found.ok) return { success: false, error: found.error };
+      const user = found.user;
       if (user.id === session.user.id) continue; // creator handled separately
       resolved.push({
         userId: user.id,
@@ -347,10 +348,11 @@ export async function addMortgageMemberByEmail(
     const loaded = await loadMortgageForMember(mortgageId, { requireOwner: true });
     if (!loaded.ok) return { success: false, error: loaded.error };
     const validated = addMemberSchema.parse(data);
-    const user = await findUserByEmail(validated.email);
-    if (!user || !user.isActive) {
-      return { success: false, error: 'No active Sampolio account uses that email yet' };
+    const found = await resolveMemberByEmail(loaded.userId, validated.email);
+    if (!found.ok) {
+      return { success: false, error: found.error.startsWith('No active') ? 'No active Sampolio account uses that email yet' : found.error };
     }
+    const user = found.user;
     if (loaded.mortgage.members.some((m) => m.userId === user.id)) {
       return { success: false, error: 'That person is already a member' };
     }

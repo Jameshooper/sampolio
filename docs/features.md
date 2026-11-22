@@ -27,7 +27,10 @@ Access control lives in the action layer: `loadGroupForMember` in
 `removeSplitGroupMember` (which also refuses while the member's net ≠ 0),
 `updateSplitGroupMemberRole` (which also refuses demoting the group's only owner —
 promote another member first to transfer ownership), and `importSplitwiseCsv`. Members
-are account-only, added by email via `findUserByEmail`; the creator is an `owner`.
+are account-only, added by email via `resolveMemberByEmail`
+(`src/lib/member-lookup-limit.ts`: after 20 unknown emails in an hour a user's lookups
+are refused, so add-by-email can't be used to enumerate accounts — shared with the
+mortgage add-member flow); the creator is an `owner`.
 `setDefaultSplitGroup` stores `defaultSplitGroupId` in the user's preferences (used by
 the quick-add modal).
 
@@ -38,7 +41,9 @@ invalidation reaches every member. Cached readers in `src/lib/db/cached.ts`.
 ### Money model — INTEGER CENTS, Splitwise-compatible signs
 
 All split money is **integer cents** (`toCents`/`fromCents` in
-`src/lib/split-utils.ts`; the Zod schemas enforce `z.number().int()`). Every row
+`src/lib/split-utils.ts`; `toCents` removes binary-float error before rounding and
+rounds half-cents away from zero, so `1.005 → 101`, `-1.005 → -101`; the Zod schemas
+enforce `z.number().int()`). Every row
 (`SplitExpense` in `src/types/index.ts`, a discriminated union of
 `kind: 'expense'` → `SplitExpenseItem` and `kind: 'payment'` → `SplitPayment`) carries
 `netByUserId` — cents per member, summing to 0 — as the **canonical** balance
@@ -58,14 +63,24 @@ directly. A member's running balance = Σ net across rows.
     (throws otherwise);
   - `percent` / `shares` — `splitConfig` values are weights; allocation uses the
     **largest-remainder method** (ties broken by index) so parts sum exactly.
+
+  `splitConfig` values must be finite and ≥ 0 (`splitSpecSchema`, and `resolveSplit`
+  throws as a second check): a negative weight would let a member assign another
+  member more than the expense total.
 - `paymentNet(from, to, amount)` → `{ [from]: +amount, [to]: -amount }` (a settle-up
   raises the payer's balance).
 - `computeMemberBalances(members, rows)` sums `netByUserId` per member.
 - `suggestSettleUp(balances)` — greedy debt simplification: largest debtor pays largest
   creditor until all balances zero out (fewest transfers for 2 members; general for n).
 - `generateOccurrenceDates(rule, upToInclusive)` — date-grained recurrence
-  (`daily | weekly | biweekly | monthly | yearly` from `anchorDate`), resumes exactly
-  after `lastGeneratedThrough`, honors `endDate`, hard guard at 10 000 iterations.
+  (`daily | weekly | biweekly | monthly | yearly`). The n-th occurrence is always
+  computed **from `anchorDate`** (`addMonths(anchor, n)` etc.), never by stepping from
+  the previous date, so month-end and leap days clamp per occurrence only: a Jan-31
+  monthly rule gives Jan 31, Feb 28, Mar 31, Apr 30; a Feb-29 yearly rule returns to
+  Feb 29 in leap years. Resumes after `lastGeneratedThrough`; for monthly/yearly rules a
+  period that already has an occurrence is skipped (so rows materialized on a drifted
+  date, e.g. "03-28", don't get a second same-month occurrence). Honors `endDate`, hard
+  guard at 10 000 iterations.
 - `guessCategory(title)` — keyword lookup (Finnish + English merchant words), fallback
   `'General'`. Used by `quickAddSplitExpense` when no category is given.
 
@@ -678,9 +693,10 @@ implemented in `src/lib/per-diem-utils.ts` against the euro amounts in
 `src/lib/per-diem-rates.ts`):
 
 - The trip is measured from departure to return date/time
-  (`computeTripHours` — parses both as **local** date/times and diffs epoch ms at
-  minute precision; a trip crossing a DST transition is off by ±1h from the literal
-  wall-clock span, an accepted simplification). Each full 24h slice from departure
+  (`computeTripHours` — diffs the two **wall-clock** date/times at minute precision,
+  placing them on the UTC timeline purely as a calendar, so every calendar day is 24h
+  and the result is the same on every server/browser time zone; a trip across a DST
+  change is measured on the wall clock, 08:00 → 08:00 = 24h). Each full 24h slice from departure
   is a "travel day" earning a **full** per diem at that slice's country rate
   (domestic €54, else that country's listed rate, or €52 for an unlisted
   destination).

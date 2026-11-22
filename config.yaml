@@ -1,5 +1,5 @@
 name: Sampolio
-version: "3.24.1"
+version: "4.0.0"
 slug: sampolio
 description: A self-hosted personal finance planner — cash flow projections, budgets, goals and trips, shared mortgage and split expenses, with optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
@@ -60,6 +60,7 @@ options:
   tailscale_funnel: false
   reset_admin_password: false
   wipe_data: false
+  require_path_binding: true
 schema:
   # Either give the value here, or — better — put it in a file under /ssl and
   # name the file instead. An option's value is stored verbatim in
@@ -94,3 +95,8 @@ schema:
   # options.json or shown in the Configuration tab.
   reset_admin_password: bool
   wipe_data: bool
+  # On (default): at start, older-format data files are upgraded so each is
+  # bound to its path, then any unbound file is refused (a .enc file copied
+  # over another user's, or restored from a pre-4.0 backup, will not load).
+  # Turn off only to read a data set whose upgrade keeps failing.
+  require_path_binding: bool

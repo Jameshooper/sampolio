@@ -8,6 +8,7 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 function getAccountsDir(userId: string): string {
@@ -15,7 +16,7 @@ function getAccountsDir(userId: string): string {
 }
 
 function getAccountFile(userId: string, accountId: string): string {
-  return path.join(getAccountsDir(userId), `${accountId}.enc`);
+  return path.join(getAccountsDir(userId), `${assertSafeId(accountId)}.enc`);
 }
 
 export async function getAccounts(userId: string): Promise<FinancialAccount[]> {

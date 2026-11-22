@@ -66,6 +66,7 @@ if [ -f "$OPTIONS_FILE" ]; then
   TAILSCALE_FUNNEL="${TAILSCALE_FUNNEL:-$(get_option tailscale_funnel)}"
   RESET_ADMIN_PASSWORD="${RESET_ADMIN_PASSWORD:-$(get_option reset_admin_password)}"
   WIPE_DATA="${WIPE_DATA:-$(get_option wipe_data)}"
+  REQUIRE_PATH_BINDING="${REQUIRE_PATH_BINDING:-$(get_option require_path_binding)}"
 
   # A value still in the inline option is on the Configuration tab and in
   # options.json whether or not it is the one being used.
@@ -121,6 +122,27 @@ if [ "${WIPE_DATA:-}" = "true" ]; then
   fi
 else
   rm -f "$WIPE_MARKER"
+fi
+
+# Encrypted-file format v2 binds every file to its path, so a .enc file copied
+# over another user's (or planted from an old backup) no longer decrypts. With
+# require_path_binding on (the default), upgrade any older v1 files in place
+# first — only files not yet on v2 are rewritten, so this is cheap on every
+# start — then make the app refuse v1 outright. If anything fails to upgrade
+# (e.g. a different encryption_key), stay in compatibility mode rather than
+# lock the data away, and say so. There is no shell in the add-on, which is
+# why this runs here instead of as a manual step (docs/operations.md §8).
+REENCRYPT_SCRIPT="${REENCRYPT_SCRIPT:-scripts/reencrypt-data.mjs}"
+if [ "${REQUIRE_PATH_BINDING:-true}" != "false" ]; then
+  if [ ! -f "$REENCRYPT_SCRIPT" ]; then
+    echo "Sampolio: $REENCRYPT_SCRIPT not found; leaving encrypted-file path binding in compatibility mode." >&2
+  elif node "$REENCRYPT_SCRIPT" --upgrade-only >/tmp/sampolio-reencrypt.log 2>&1; then
+    export ENCRYPTION_REQUIRE_PATH_BINDING=true
+  else
+    echo "Sampolio: could not upgrade every data file to the path-bound format (see below)." >&2
+    echo "Sampolio: staying in compatibility mode; check that encryption_key is the one the data was created with." >&2
+    tail -n 20 /tmp/sampolio-reencrypt.log >&2 || true
+  fi
 fi
 
 # Read by the app at startup (src/lib/addon-maintenance.ts), which has the

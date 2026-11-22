@@ -38,6 +38,8 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
+  withFileLock,
 } from './encryption';
 import { pruneOccurrencesAfter } from '@/lib/split-utils';
 
@@ -52,19 +54,19 @@ function getGroupsDir(): string {
   return path.join(getSharedDir(), 'split-groups');
 }
 function getGroupFile(groupId: string): string {
-  return path.join(getGroupsDir(), `${groupId}.enc`);
+  return path.join(getGroupsDir(), `${assertSafeId(groupId)}.enc`);
 }
 function getExpensesDir(groupId: string): string {
-  return path.join(getGroupsDir(), groupId, 'expenses');
+  return path.join(getGroupsDir(), assertSafeId(groupId), 'expenses');
 }
 function getChunkFile(groupId: string, yearMonth: string): string {
-  return path.join(getExpensesDir(groupId), `${yearMonth}.enc`);
+  return path.join(getExpensesDir(groupId), `${assertSafeId(yearMonth)}.enc`);
 }
 function getSummaryFile(groupId: string): string {
-  return path.join(getGroupsDir(), groupId, 'summary.enc');
+  return path.join(getGroupsDir(), assertSafeId(groupId), 'summary.enc');
 }
 function getMemberIndexFile(userId: string): string {
-  return path.join(getSharedDir(), 'split-group-members', `${userId}.enc`);
+  return path.join(getSharedDir(), 'split-group-members', `${assertSafeId(userId, 'user id')}.enc`);
 }
 
 const ymOf = (date: string): string => date.slice(0, 7);
@@ -82,17 +84,23 @@ export async function getSplitGroupIdsForUser(userId: string): Promise<string[]>
   return index?.groupIds ?? [];
 }
 
+// Per-user reverse indexes are shared across groups (the group mutex in the
+// action layer doesn't cover them), so they get their own file lock.
 async function addUserToIndex(userId: string, groupId: string): Promise<void> {
-  const ids = await getSplitGroupIdsForUser(userId);
-  if (!ids.includes(groupId)) {
-    ids.push(groupId);
-    await writeEncryptedFile(getMemberIndexFile(userId), { groupIds: ids });
-  }
+  await withFileLock(getMemberIndexFile(userId), async () => {
+    const ids = await getSplitGroupIdsForUser(userId);
+    if (!ids.includes(groupId)) {
+      ids.push(groupId);
+      await writeEncryptedFile(getMemberIndexFile(userId), { groupIds: ids });
+    }
+  });
 }
 
 async function removeUserFromIndex(userId: string, groupId: string): Promise<void> {
-  const ids = await getSplitGroupIdsForUser(userId);
-  await writeEncryptedFile(getMemberIndexFile(userId), { groupIds: ids.filter((id) => id !== groupId) });
+  await withFileLock(getMemberIndexFile(userId), async () => {
+    const ids = await getSplitGroupIdsForUser(userId);
+    await writeEncryptedFile(getMemberIndexFile(userId), { groupIds: ids.filter((id) => id !== groupId) });
+  });
 }
 
 // ============================================================

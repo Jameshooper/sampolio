@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: CI only needs to read the code.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Actions are pinned to full commit SHAs (tag in the comment).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1 (version from package.json packageManager)
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test
+      - run: pnpm audit --prod
+      - run: pnpm build
+
+  docker:
+    # Builds the committed Dockerfile (the image the Home Assistant add-on
+    # also builds) and checks the container serves the app from a mounted
+    # data volume, with path-bound private data files and no secrets baked in.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: docker build -t sampolio:ci .
+      - name: Smoke test
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          docker run -d --name sampolio -p 3999:3999 -v "$RUNNER_TEMP/data:/data" \
+            -e AUTH_SECRET="$(openssl rand -base64 32)" -e ENCRYPTION_KEY="$(openssl rand -hex 32)" \
+            -e AUTH_URL=http://localhost:3999 sampolio:ci
+          for i in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3999/auth/signin || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          test "$code" = "200"
+          # Secrets and VCS metadata never reach the image.
+          docker exec sampolio sh -c 'test ! -e /app/.env && test ! -e /app/.git'
+          # Strict path binding is on by default.
+          docker exec sampolio sh -c 'tr "\\0" "\\n" < /proc/$(pgrep -f "next start" | head -1)/environ | grep -qx ENCRYPTION_REQUIRE_PATH_BINDING=true'
+          # Sign-up writes v2 (path-bound), owner-only files.
+          curl -s -o /dev/null http://localhost:3999/auth/signup
+          sudo sh -c 'for f in $(find "$0/sampolio" -name "*.enc"); do head -c4 "$f" | grep -q "^sv2:" || { echo "not v2: $f"; exit 1; }; done; test -z "$(find "$0/sampolio" -name "*.enc" ! -perm 600)"' "$RUNNER_TEMP/data"
+      - name: Container logs
+        if: failure()
+        run: docker logs sampolio || true

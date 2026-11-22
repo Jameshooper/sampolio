@@ -6,7 +6,7 @@ All backend logic for the application. There are **no REST API routes** — ever
 
 Every action file starts with `'use server'` and exports async functions. The consistent pattern is:
 
-1. **Authenticate**: `const session = await auth()` — reject if no session
+1. **Authenticate**: `const session = await auth()` — reject if no session (`auth()` re-validates the account and session id on every call; see `docs/architecture.md` §9)
 2. **Validate**: Use Zod schema to parse input
 3. **Execute**: Call DB layer functions from `src/lib/db/`
 4. **Invalidate cache**: Call `updateTag(tagName)` for affected data
@@ -37,8 +37,8 @@ Every action file starts with `'use server'` and exports async functions. The co
 | `euribor.ts` | Euribor prefill | `fetchCurrentEuribor12m` — ECB Data Portal fetch (5s timeout, 6h in-memory TTL, always-graceful failure); prefills the mortgage Euribor dialog, never auto-applies |
 | `admin.ts` | Users & app settings | User CRUD, settings (admin only) |
 | `maintenance.ts` | Data maintenance | History compaction preview/run (prune snapshots/sessions) |
-| `auth.ts` | Authentication | Sign-up, signup-enabled check |
-| `account.ts` | Account self-service | `changeMyPassword` (re-verifies current password), `getAccountDeletionPreflight`, `deleteMyAccount` (email-typed confirm; re-runs preflight server-side; bank teardown + shared-entity leave/delete + `hardDeleteUser`), `resetMyData` ("start fresh": bank teardown + wipe owned data dirs, keeps user.enc/preferences.enc), `updateMyAvatar` (data-URI or null → `setUserAvatar`, bumps `avatarVersion`) — all session-scoped, none accept a userId |
+| `auth.ts` | Authentication | Sign-up (shared `passwordPolicySchema`; first-account path via `isFirstUserSetup`, re-checked inside the users-index lock with `createUser(…, { onlyIfFirstUser })` when sign-up is closed), signup-enabled check |
+| `account.ts` | Account self-service | `changeMyPassword` (re-verifies current password; bumps `sessionVersion`, so every session — this one included — ends and the UI signs out), `getAccountDeletionPreflight`, `deleteMyAccount` (email-typed confirm; re-runs preflight server-side; bank teardown + shared-entity leave/delete + `hardDeleteUser`), `resetMyData` ("start fresh": bank teardown + wipe owned data dirs, keeps user.enc/preferences.enc), `updateMyAvatar` (data-URI or null → `setUserAvatar`, bumps `avatarVersion`) — all session-scoped, none accept a userId |
 | `user-preferences.ts` | User preferences | Read/update preferences (categories, display mode, tax defaults, check-in reminders/notifications, `updateBankAccountOrder` — bank-link display order, and `updateSplitGroupOrder` — split-group display order, both sanitized against current ids). `updateBottomNavIds` stores the mobile bottom-nav tabs (`bottomNavIds`: 1–4 `NavigationPage` ids validated with `z.enum(NAVIGATION_PAGE_IDS)` from the plain `@/lib/bottom-nav-prefs`, deduped; `null` writes `undefined` so the key is dropped and the per-display-mode defaults apply again). `updateSplitNotificationPrefs` stores the five-key `splitNotificationPrefs` opt-out record wholesale (the UI always sends all five; absent key ⇒ notifications on); `getSplitNotifyStatus` reports whether the server has the Home Assistant webhook configured (`getSplitNotifyConfig() !== null`, mirroring `getBankFeatureStatus`) |
 | `user-profiles.ts` | User profiles (display) | `getUserProfiles(userIds)` → `{ id, name, avatarUrl? }` for any authenticated user (no email/role — safe for cross-user member/actor displays) |
 | `app-info.ts` | App metadata | Version info |
@@ -81,3 +81,5 @@ all-data                       (admin cache clear)
 3. Follow the authenticate → validate → execute → invalidate → return pattern
 4. Add cached query wrapper in `src/lib/db/cached.ts` if data is read frequently
 5. Use descriptive cache tags following the `user:{userId}:entity-type` pattern
+6. Treat every id argument as attacker-controlled: the DB path builders reject unsafe ids (`assertSafeId` throws); loaders that should answer "not found" check `isSafeId` first (see `loadOwnBudget`, `loadGroupForMember`, `loadMortgageForMember`)
+7. Only async functions may be exported from a `'use server'` file — keep constants and helpers unexported or in a plain module

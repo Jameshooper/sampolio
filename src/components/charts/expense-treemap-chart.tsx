@@ -22,6 +22,7 @@ import {
     type ChartTourStep,
 } from '@/components/ui/chart-explain';
 import type { ProjectionLineItem, Currency } from '@/types';
+import { escapeHtml } from '@/lib/html-escape';
 
 echarts.use([TreemapChart, TooltipComponent, CanvasRenderer]);
 
@@ -150,7 +151,7 @@ export function ExpenseTreemapChart({ expenses, currency, height = '350px', onCl
                         .join(' › ');
                     const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
                     const pct = totalExpenses > 0 ? ((params.value / totalExpenses) * 100).toFixed(1) : '0';
-                    return `<strong>${path || params.name}</strong><br/>${formatCurrency(params.value, currency)}<br/>${pct}% of total expenses`;
+                    return `<strong>${escapeHtml(path || params.name)}</strong><br/>${formatCurrency(params.value, currency)}<br/>${pct}% of total expenses`;
                 },
             },
             series: [

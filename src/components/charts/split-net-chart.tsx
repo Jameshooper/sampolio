@@ -11,6 +11,7 @@ import { useAppContext } from '@/components/layout/app-layout';
 import { formatCents, formatYearMonth, formatYearMonthShort } from '@/lib/constants';
 import type { SplitInsights } from '@/lib/split-insights';
 import type { Currency } from '@/types';
+import { escapeHtml } from '@/lib/html-escape';
 
 echarts.use([BarChart, LineChart, TooltipComponent, GridComponent, MarkLineComponent, CanvasRenderer]);
 
@@ -99,7 +100,7 @@ export function SplitNetChart({ insights, currency }: SplitNetChartProps) {
             d === 0
               ? 'Change: none'
               : `Change: ${d > 0 ? '+' : '−'}${formatCents(Math.abs(d), currency)}`;
-          return `<strong>${formatYearMonth(params[0].axisValue)}</strong><br/>${label}: ${formatCents(
+          return `<strong>${escapeHtml(formatYearMonth(params[0].axisValue))}</strong><br/>${label}: ${formatCents(
             Math.abs(v),
             currency,
           )}<br/>${change}`;

@@ -1,3 +1,4 @@
+import { roundMoney } from './projection';
 import type { SalaryBenefit } from '@/types';
 
 /**
@@ -20,5 +21,6 @@ export function calculateNetSalary(
   const taxAmount = taxableBase * (taxRate / 100);
   const contributionsAmount = taxableBase * (contributionsRate / 100);
   // Net = gross minus all deductions (benefits are NOT added back since they are not received as cash)
-  return grossSalary - taxAmount - contributionsAmount - otherDeductions;
+  // A payslip's net is in whole cents.
+  return roundMoney(grossSalary - taxAmount - contributionsAmount - otherDeductions);
 }

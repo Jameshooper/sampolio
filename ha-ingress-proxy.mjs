@@ -191,9 +191,10 @@ export function createProxyServer({ upstreamPort = UPSTREAM_PORT } = {}) {
     // Force plain-text upstream responses so string rewriting never has to
     // touch gzip — this is a loopback hop, compression cost is irrelevant.
     delete headers['accept-encoding'];
-    // src/proxy.ts derives its rate-limit key from X-Forwarded-For's first
-    // entry, so a caller that can set that header freely can reset its own
-    // auth-attempt budget at will. Requests arriving through Ingress carry
+    // src/proxy.ts derives its rate-limit and login-lockout key from the
+    // X-Forwarded-For entry its trusted proxy added (src/lib/client-ip.ts,
+    // TRUSTED_PROXY_HOPS=1 — this proxy), so a caller that could set that
+    // header freely could reset its own auth-attempt budget at will. Requests arriving through Ingress carry
     // Supervisor's own forwarding headers and a valid ingress prefix — keep
     // those, they hold the real client IP. Anything else reached this port
     // outside Ingress (the Funnel-published callback path, or another

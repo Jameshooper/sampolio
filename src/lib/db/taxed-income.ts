@@ -13,16 +13,17 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 import { getSalaryConfigs } from './salary-configs';
 import { calculateTaxedIncomeNet } from '@/lib/taxed-income-utils';
 
 function getTaxedIncomeDir(userId: string, accountId: string): string {
-  return path.join(getUserDir(userId), 'accounts', accountId, 'taxed-income');
+  return path.join(getUserDir(userId), 'accounts', assertSafeId(accountId), 'taxed-income');
 }
 
 function getTaxedIncomeFile(userId: string, accountId: string, incomeId: string): string {
-  return path.join(getTaxedIncomeDir(userId, accountId), `${incomeId}.enc`);
+  return path.join(getTaxedIncomeDir(userId, accountId), `${assertSafeId(incomeId)}.enc`);
 }
 
 // Get default tax settings from salary configs

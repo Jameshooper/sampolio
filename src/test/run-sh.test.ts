@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { execFile } from 'node:child_process';
-import { createPrivateKey, generateKeyPairSync } from 'node:crypto';
+import { createCipheriv, createPrivateKey, generateKeyPairSync, hkdfSync, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,6 +51,7 @@ case "$*" in
     ;;
   *next*start*)
     echo "node $*" >> "$STUB_LOG"
+    echo "env ENCRYPTION_REQUIRE_PATH_BINDING=\${ENCRYPTION_REQUIRE_PATH_BINDING:-unset}" >> "$STUB_LOG"
     # run.sh waits for the upstream port before exec'ing the proxy, so the
     # stub has to actually hold that port open or the wait burns 30s and the
     # script exits non-zero. Self-terminates so nothing outlives the test.
@@ -527,5 +528,53 @@ describe('run.sh embedded Tailscale', () => {
     });
     expect(res.stubLog).not.toContain('443 on');
     expect(res.stubLog).toContain('funnel 443 off');
+  });
+});
+
+describe('run.sh encrypted-file path binding', () => {
+  /** A v1 (pre-4.0, not path-bound) file, as earlier versions wrote it. */
+  function writeV1File(file: string, key: string, plaintext: string) {
+    const salt = randomBytes(64);
+    const iv = randomBytes(16);
+    const k = Buffer.from(hkdfSync('sha256', Buffer.from(key, 'utf8'), salt, Buffer.from('sampolio-file-encryption-v1'), 32));
+    const c = createCipheriv('aes-256-gcm', k, iv);
+    const enc = Buffer.concat([c.update(plaintext, 'utf8'), c.final()]);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, Buffer.concat([salt, iv, c.getAuthTag(), enc]).toString('base64'));
+  }
+
+  function dataDirWithV1File(key: string) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sampolio-v1-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'users', 'alex-id', 'user.enc');
+    writeV1File(file, key, '{"name":"Alex"}');
+    return { dir, file };
+  }
+
+  it('upgrades older files and turns strict binding on by default', async () => {
+    const { dir, file } = dataDirWithV1File(REQUIRED.encryption_key);
+    const res = await runEntrypoint(REQUIRED, { DATA_DIR: dir });
+    expect(res.code).toBe(0);
+    expect(res.stubLog).toContain('ENCRYPTION_REQUIRE_PATH_BINDING=true');
+    expect(fs.readFileSync(file, 'utf8').startsWith('sv2:')).toBe(true);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it('leaves files and the app in compatibility mode when the option is off', async () => {
+    const { dir, file } = dataDirWithV1File(REQUIRED.encryption_key);
+    const before = fs.readFileSync(file, 'utf8');
+    const res = await runEntrypoint({ ...REQUIRED, require_path_binding: false }, { DATA_DIR: dir });
+    expect(res.code).toBe(0);
+    expect(res.stubLog).toContain('ENCRYPTION_REQUIRE_PATH_BINDING=unset');
+    expect(fs.readFileSync(file, 'utf8')).toBe(before);
+  });
+
+  it('stays in compatibility mode, loudly, when a file cannot be upgraded (different key)', async () => {
+    const { dir } = dataDirWithV1File('some-other-encryption-key');
+    const res = await runEntrypoint(REQUIRED, { DATA_DIR: dir });
+    expect(res.code).toBe(0);
+    expect(res.stubLog).toContain('ENCRYPTION_REQUIRE_PATH_BINDING=unset');
+    expect(res.stderr).toContain('compatibility mode');
+    expect(res.stderr).not.toContain(REQUIRED.encryption_key);
   });
 });

@@ -9,7 +9,10 @@
 # ships the *production* subset only (see the prune step below), not the
 # standalone tracer output that dropped @swc/helpers.
 
-FROM node:26-alpine AS builder
+# The base image is pinned by digest (both stages) so every build — including
+# the one Home Assistant Supervisor runs on install/update — uses the same
+# bytes. Dependabot (docker ecosystem) proposes digest updates.
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS builder
 WORKDIR /app
 
 # Node 25+ no longer bundles corepack — install the pnpm version pinned in
@@ -44,7 +47,7 @@ RUN pnpm build
 # small/fixed-storage hosts (e.g. a Home Assistant Green's eMMC).
 RUN pnpm prune --prod && pnpm store prune
 
-FROM node:26-alpine AS runner
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV DISABLE_TLS_HEADERS=true

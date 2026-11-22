@@ -250,7 +250,7 @@ export async function resetMyData(): Promise<ApiResponse<null>> {
   }
 
   const userDir = getUserDir(userId);
-  await Promise.all(RESET_DIRS.map((d) => fs.rm(path.join(userDir, d), { recursive: true, force: true })));
+  await Promise.all(RESET_DIRS.map((d) => fs.rm(path.join(/*turbopackIgnore: true*/ userDir, d), { recursive: true, force: true })));
 
   updateTag(`user:${userId}`);
   return { success: true };

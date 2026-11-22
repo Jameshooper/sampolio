@@ -32,6 +32,11 @@ let cachedKey: { file: string; key: SigningKey } | null = null;
 
 async function loadPrivateKey(keyFile: string): Promise<SigningKey> {
   if (cachedKey && cachedKey.file === keyFile) return cachedKey.key;
+  // The key should be 0600; say so (once per load) if group/others can read it.
+  const { mode } = await fs.stat(keyFile);
+  if (process.platform !== 'win32' && (mode & 0o077) !== 0) {
+    console.warn('[bank] ENABLE_BANKING_PRIVATE_KEY_FILE is readable by other accounts — run: chmod 600 <file>');
+  }
   const pem = await fs.readFile(keyFile, 'utf8');
   const key = await importPKCS8(pem, 'RS256');
   cachedKey = { file: keyFile, key };
