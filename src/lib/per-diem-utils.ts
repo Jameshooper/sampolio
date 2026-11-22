@@ -12,24 +12,29 @@ import { DOMESTIC_COUNTRY_CODE } from './per-diem-rates';
 // Date/time parsing
 // ============================================================
 
+// Trip times are wall-clock values ("2026-10-24T08:00"). They are placed on
+// the UTC timeline purely as a calendar — not because the trip happened in
+// UTC — so every calendar day is exactly 24h and results don't depend on the
+// server's or browser's time zone (a UTC Docker host and a Europe/Helsinki
+// host used to disagree around DST changes).
 function parseLocalDateTime(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
   if (!match) return null;
   const [, y, mo, d, h, mi] = match;
-  const date = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi));
+  const date = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi)));
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function addCalendarDays(date: Date, days: number): Date {
   const d = new Date(date);
-  d.setDate(d.getDate() + days);
+  d.setUTCDate(d.getUTCDate() + days);
   return d;
 }
 
 function formatDateYMD(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
 
@@ -48,13 +53,11 @@ export interface TripHours {
 }
 
 /**
- * Parses both timestamps as LOCAL date/times and diffs their epoch
- * milliseconds at minute precision. Because `Date` construction from
- * calendar components already resolves each moment through the host's
- * local-timezone/DST rules, a trip that spans a DST transition measures a
- * true elapsed span of 23h or 25h for what per-diem accounting treats as a
- * flat 24h travel day — an accepted ±1h simplification (Vero's own worked
- * examples reason in plain 24h slices too; no bank-style DST bookkeeping).
+ * Diffs the two wall-clock timestamps at minute precision, treating every
+ * calendar day as a flat 24h (Vero's worked examples reason in plain 24h
+ * slices; no DST bookkeeping). The result is identical on every host time
+ * zone. A trip that physically spans a DST change is therefore measured on
+ * the wall clock (e.g. 08:00 → 08:00 next day is 24h, not 23h/25h).
  * Invalid input or a non-positive span returns all zeros.
  */
 export function computeTripHours(start: string, end: string): TripHours {

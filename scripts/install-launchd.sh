@@ -59,6 +59,7 @@ fi
 # Create log and data directories
 mkdir -p "$LOG_DIR"
 mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR"
 
 # Check if already installed
 if [ -f "$PLIST_FILE" ]; then
@@ -75,34 +76,15 @@ if [ -f "$REPO_ROOT/.env" ]; then
     set +a
 fi
 
-# Read or generate AUTH_SECRET
-if [ -z "$AUTH_SECRET" ]; then
-    CONFIG_FILE="$DATA_DIR/.auth_secret"
-    if [ -f "$CONFIG_FILE" ]; then
-        AUTH_SECRET=$(cat "$CONFIG_FILE")
-    else
-        AUTH_SECRET=$(openssl rand -base64 32)
-        echo "$AUTH_SECRET" > "$CONFIG_FILE"
-        chmod 600 "$CONFIG_FILE"
-    fi
-fi
-
-# Read or generate ENCRYPTION_KEY
-if [ -z "$ENCRYPTION_KEY" ]; then
-    ENCRYPTION_CONFIG_FILE="$DATA_DIR/.encryption_key"
-    if [ -f "$ENCRYPTION_CONFIG_FILE" ]; then
-        ENCRYPTION_KEY=$(cat "$ENCRYPTION_CONFIG_FILE")
-    else
-        ENCRYPTION_KEY=$(openssl rand -hex 32)
-        echo "$ENCRYPTION_KEY" > "$ENCRYPTION_CONFIG_FILE"
-        chmod 600 "$ENCRYPTION_CONFIG_FILE"
-    fi
-fi
+# Resolve AUTH_SECRET / ENCRYPTION_KEY (env → secrets dir → legacy data-dir files)
+# shellcheck source=lib-secrets.sh
+. "$SCRIPT_DIR/lib-secrets.sh"
+sampolio_load_secrets "$DATA_DIR" || exit 1
 
 # Persist or restore AUTH_URL
 AUTH_URL_CONFIG_FILE="$DATA_DIR/.auth_url"
 if [ -n "$AUTH_URL" ]; then
-    echo "$AUTH_URL" > "$AUTH_URL_CONFIG_FILE"
+    ( umask 077 && echo "$AUTH_URL" > "$AUTH_URL_CONFIG_FILE" )
     chmod 600 "$AUTH_URL_CONFIG_FILE"
 elif [ -f "$AUTH_URL_CONFIG_FILE" ]; then
     AUTH_URL=$(cat "$AUTH_URL_CONFIG_FILE")
@@ -112,6 +94,7 @@ fi
 mkdir -p "$HOME/Library/LaunchAgents"
 
 # Create the plist file
+umask 077  # the plist below embeds secrets
 cat > "$PLIST_FILE" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -189,8 +172,8 @@ cat > "$PLIST_FILE" << EOF
 </plist>
 EOF
 
-# Set proper permissions
-chmod 644 "$PLIST_FILE"
+# The plist embeds AUTH_SECRET and ENCRYPTION_KEY: readable by this account only.
+chmod 600 "$PLIST_FILE"
 
 # Load the launch agent
 launchctl load "$PLIST_FILE"

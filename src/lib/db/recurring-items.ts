@@ -12,14 +12,15 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 function getRecurringItemsDir(userId: string, accountId: string): string {
-  return path.join(getUserDir(userId), 'accounts', accountId, 'recurring');
+  return path.join(getUserDir(userId), 'accounts', assertSafeId(accountId), 'recurring');
 }
 
 function getRecurringItemFile(userId: string, accountId: string, itemId: string): string {
-  return path.join(getRecurringItemsDir(userId, accountId), `${itemId}.enc`);
+  return path.join(getRecurringItemsDir(userId, accountId), `${assertSafeId(itemId)}.enc`);
 }
 
 export async function getRecurringItems(userId: string, accountId: string): Promise<RecurringItem[]> {

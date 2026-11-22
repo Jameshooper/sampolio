@@ -22,6 +22,7 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 // A budget is stored as a single encrypted document with its lines, funding
@@ -33,7 +34,7 @@ function getBudgetsDir(userId: string): string {
 }
 
 function getBudgetFile(userId: string, budgetId: string): string {
-  return path.join(getBudgetsDir(userId), `${budgetId}.enc`);
+  return path.join(getBudgetsDir(userId), `${assertSafeId(budgetId)}.enc`);
 }
 
 async function writeBudget(userId: string, budget: Budget): Promise<Budget> {

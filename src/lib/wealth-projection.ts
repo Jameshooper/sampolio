@@ -35,6 +35,7 @@ import {
   getIntervalMonths,
   isYearMonthInRange,
   resolveAnchor,
+  MAX_PROJECTION_MONTHS,
 } from './projection';
 
 // ============================================================
@@ -661,5 +662,11 @@ export function getLatestEndDate(
     defaultHorizonMonths
   );
 
-  return latest && compareYearMonths(latest, defaultEnd) > 0 ? latest : defaultEnd;
+  const end = latest && compareYearMonths(latest, defaultEnd) > 0 ? latest : defaultEnd;
+  // Same hard ceiling as the cashflow projection (stored/imported data guard).
+  const ceiling = addMonths(
+    formatYearMonth(new Date().getFullYear(), new Date().getMonth() + 1),
+    MAX_PROJECTION_MONTHS
+  );
+  return compareYearMonths(end, ceiling) > 0 ? ceiling : end;
 }

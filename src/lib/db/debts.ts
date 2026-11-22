@@ -14,6 +14,7 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 function getDebtsDir(userId: string): string {
@@ -21,23 +22,23 @@ function getDebtsDir(userId: string): string {
 }
 
 function getDebtFile(userId: string, debtId: string): string {
-  return path.join(getDebtsDir(userId), `${debtId}.enc`);
+  return path.join(getDebtsDir(userId), `${assertSafeId(debtId)}.enc`);
 }
 
 function getReferenceRatesDir(userId: string, debtId: string): string {
-  return path.join(getDebtsDir(userId), debtId, 'reference-rates');
+  return path.join(getDebtsDir(userId), assertSafeId(debtId), 'reference-rates');
 }
 
 function getReferenceRateFile(userId: string, debtId: string, rateId: string): string {
-  return path.join(getReferenceRatesDir(userId, debtId), `${rateId}.enc`);
+  return path.join(getReferenceRatesDir(userId, debtId), `${assertSafeId(rateId)}.enc`);
 }
 
 function getExtraPaymentsDir(userId: string, debtId: string): string {
-  return path.join(getDebtsDir(userId), debtId, 'extra-payments');
+  return path.join(getDebtsDir(userId), assertSafeId(debtId), 'extra-payments');
 }
 
 function getExtraPaymentFile(userId: string, debtId: string, paymentId: string): string {
-  return path.join(getExtraPaymentsDir(userId, debtId), `${paymentId}.enc`);
+  return path.join(getExtraPaymentsDir(userId, debtId), `${assertSafeId(paymentId)}.enc`);
 }
 
 // ============================================================

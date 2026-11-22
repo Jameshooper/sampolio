@@ -4,7 +4,7 @@ import {
   getDataDir,
   ensureDir,
   readEncryptedFile,
-  writeEncryptedFile,
+  updateEncryptedFile,
 } from './encryption';
 
 const APP_SETTINGS_FILE = 'app-settings.enc';
@@ -31,19 +31,13 @@ export async function updateAppSettings(
   updates: Partial<Pick<AppSettings, 'selfSignupEnabled'>>,
   updatedBy: string
 ): Promise<AppSettings> {
-  const currentSettings = await getAppSettings();
-  
-  const updatedSettings: AppSettings = {
-    ...currentSettings,
+  const settingsPath = await getAppSettingsPath();
+  return updateEncryptedFile<AppSettings>(settingsPath, (currentSettings) => ({
+    ...(currentSettings ?? DEFAULT_SETTINGS),
     ...updates,
     updatedAt: new Date().toISOString(),
     updatedBy,
-  };
-  
-  const settingsPath = await getAppSettingsPath();
-  await writeEncryptedFile(settingsPath, updatedSettings);
-  
-  return updatedSettings;
+  }));
 }
 
 export async function isSelfSignupEnabled(): Promise<boolean> {

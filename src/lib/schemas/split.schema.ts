@@ -11,7 +11,9 @@ export const splitIntervalEnum = z.enum(['daily', 'weekly', 'biweekly', 'monthly
 export const splitSpecSchema = z.object({
   paidByUserId: z.string().min(1, 'Pick who paid'),
   splitMode: splitModeEnum,
-  splitConfig: z.record(z.string(), z.number()).optional(),
+  // Weights / percents / exact cents per member. Negative values would let a
+  // member assign another member more than the expense total.
+  splitConfig: z.record(z.string(), z.number().finite().nonnegative('Split amounts cannot be negative')).optional(),
   participantUserIds: z.array(z.string()).optional(),
 });
 

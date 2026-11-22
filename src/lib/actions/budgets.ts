@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { CURRENCY_VALUES } from '@/lib/constants';
 import { auth } from '@/lib/auth';
+import { isSafeId } from '@/lib/db/encryption';
 import {
   createBudget as dbCreateBudget,
   updateBudget as dbUpdateBudget,
@@ -123,6 +124,7 @@ async function loadOwnBudget(budgetId: string): Promise<LoadResult> {
   if (!session?.user?.id) {
     return { ok: false, error: 'Unauthorized' };
   }
+  if (!isSafeId(budgetId)) return { ok: false, error: 'Budget not found' };
   const budget = await cachedGetBudgetById(session.user.id, budgetId);
   if (!budget) {
     return { ok: false, error: 'Budget not found' };

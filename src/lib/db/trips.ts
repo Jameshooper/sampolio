@@ -12,6 +12,7 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 
 // A trip is stored as a single encrypted document (day list + rate snapshot
@@ -22,7 +23,7 @@ function getTripsDir(userId: string): string {
 }
 
 function getTripFile(userId: string, tripId: string): string {
-  return path.join(getTripsDir(userId), `${tripId}.enc`);
+  return path.join(getTripsDir(userId), `${assertSafeId(tripId)}.enc`);
 }
 
 // ============================================================

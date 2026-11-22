@@ -94,11 +94,12 @@ A self-hosted personal finance planning tool that replaces budgeting spreadsheet
 - **Cache Management**: Force revalidation of all caches from settings
 
 ### Security & Privacy
-- **File-Based Encrypted Storage**: AES-256-GCM encryption with HKDF-SHA256 key derivation — your data stays on your server
-- **Password Security**: bcrypt hashing (12 rounds), strong password requirements (8+ chars, mixed case, numbers, special chars)
-- **Brute Force Protection**: Account lockout after 10 failed attempts within 15 minutes
-- **Rate Limiting**: Edge middleware caps unauthenticated auth requests (20/min) and general requests (300/min) per IP
-- **Security Headers**: XSS protection, frame options, CSP, HSTS, restricted permissions policy
+- **File-Based Encrypted Storage**: AES-256-GCM encryption with HKDF-SHA256 key derivation — your data stays on your server. Writes are atomic (temp file + rename), files are private (0600/0700), and record ids are validated so no request can reach a file outside its own records
+- **Password Security**: bcrypt hashing (12 rounds), one strong password policy for sign-up, admin-created users and changes (8+ chars, mixed case, numbers, special chars)
+- **Sessions**: every request re-checks the account, so deactivation, deletion, role changes, password changes and sign-out end sessions immediately
+- **Brute Force Protection**: 10 failed attempts from one client (or 50 from anywhere) within 15 minutes lock that sign-in for 15 minutes; failed logins take the same time whether or not the account exists
+- **Rate Limiting**: the proxy caps credential checks and sign-up (20/min) and signed-out requests (300/min) per client IP, using only trusted proxy hops (`TRUSTED_PROXY_HOPS`)
+- **Security Headers**: frame options, CSP (no `unsafe-eval` in production), HSTS, restricted permissions policy; user-supplied text is escaped in chart tooltips
 - **Self-Hosted**: Deploy by cloning and building on your own server — no external database needed
 
 ## Getting Started
@@ -436,6 +437,149 @@ open http://localhost:3999
 
 ### Docker Deployment
 
+The repo ships a [`Dockerfile`](Dockerfile) and a [`.dockerignore`](.dockerignore).
+The image runs as the unprivileged `node` user, and the ignore file keeps `.env*`,
+`data/`, `.git` and local build output out of the build context, so secrets and
+financial data are never baked into image layers. (The Dockerfile is not
+exercised by CI; build and smoke-test it before relying on it.)
+
+Build and run:
+```bash
+docker build -t sampolio .
+```
+
+```bash
+# Data lives on a host volume (must be writable by uid 1000); secrets come from
+# an env file at run time.
+mkdir -p sampolio-data
+docker run -p 3999:3999 -v "$(pwd)/sampolio-data:/app/data" --env-file .env sampolio
+```
+
+Keep the host data directory out of the repository folder you build from. If
+the container is reached directly rather than through a reverse proxy, set
+`TRUSTED_PROXY_HOPS=0` (see Environment Variables).
+
+## Environment Variables on Deployment
+
+**Recommended: Using .env File** (ensures secrets stay consistent)
+
+The repo includes a `.env.example` template. Create your `.env` file at the repo root with fixed secrets:
+
+```bash
+# In the cloned repo (~/sampolio)
+cp .env.example .env
+
+# Generate your secrets
+echo "AUTH_SECRET=$(openssl rand -base64 32)" >> .env
+echo "ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
+
+# Edit .env to verify values
+nano .env
+```
+
+Then run normally:
+```bash
+./scripts/run-sampolio.sh  # or ./scripts/install-launchd.sh
+```
+
+**Important**:
+- Keep your `.env` file secure and backed up
+- Never change `ENCRYPTION_KEY` — existing data will be unreadable
+- Never commit `.env` to version control
+
+**Alternative: Auto-Generated Secrets**
+
+If you don't provide a `.env` file, secrets are auto-generated on first run:
+- `AUTH_SECRET`: Stored in `~/.sampolio/data/.auth_secret`
+- `ENCRYPTION_KEY`: Stored in `~/.sampolio/data/.encryption_key`
+
+**Optional Environment Variables** (in .env or as exports):
+```bash
+SAMPOLIO_PORT=3999                    # Server port (default: 3999)
+SAMPOLIO_HOST=0.0.0.0                # Server host (default: 0.0.0.0)
+SAMPOLIO_DATA_DIR=~/.sampolio/data   # Data directory
+```
+
+**Migrating Data Between Servers**:
+
+**Important**: Use the same `ENCRYPTION_KEY` to decrypt existing data.
+
+**Method 1: Copy .env file and data** (simplest):
+```bash
+# On source server, backup everything
+tar -czf sampolio-backup.tar.gz -C ~/sampolio .env -C ~/.sampolio data
+
+# Transfer to new server (clone the repo there first, then:)
+scp sampolio-backup.tar.gz new-server:~/
+
+# On new server, extract into the clone
+cd ~/sampolio
+tar -xzf ~/sampolio-backup.tar.gz
+
+# The .env file from source server is now in place
+./scripts/server-deploy.sh && ./scripts/run-sampolio.sh
+```
+
+**Method 2: Using auto-generated secrets**:
+```bash
+# On source server, backup secrets and data
+tar -czf sampolio-backup.tar.gz -C ~/.sampolio data
+
+# Transfer to new server
+scp sampolio-backup.tar.gz new-server:~/
+
+# On new server, extract before first run
+cd ~
+mkdir -p .sampolio
+tar -xzf sampolio-backup.tar.gz -C .sampolio
+
+# Build, then run - will use existing .auth_secret and .encryption_key files
+cd ~/sampolio
+./scripts/server-deploy.sh && ./scripts/run-sampolio.sh
+```
+
+#### Upgrading to a New Version
+
+On the server, pull the latest code and rebuild in place:
+
+```bash
+cd ~/sampolio
+
+# (Optional) back up your data before a major upgrade
+tar -czf ~/sampolio-data-backup-$(date +%Y%m%d).tar.gz -C ~/.sampolio data
+
+# Pull + install + build in one step
+./scripts/server-deploy.sh --pull
+
+# Reload the service to pick up the new build
+./scripts/install-launchd.sh   # re-running it reloads the launchd agent
+```
+
+If you run manually instead of via launchd, stop with `Ctrl+C` and start again
+with `./scripts/run-sampolio.sh`.
+
+Verify:
+```bash
+tail -f ~/.sampolio/logs/sampolio.log   # if using launchd
+open http://localhost:3999
+```
+
+**Notes**:
+- Your data in `~/.sampolio/data/` and your `.env` are untouched by upgrades.
+- `--pull` runs `git pull --ff-only`; commit or stash local changes first.
+- If `.nvmrc` changed, `server-deploy.sh` installs/activates the new Node version
+  automatically (via fnm/nvm).
+- To roll back: `git checkout <previous-tag-or-commit>` then
+  `./scripts/server-deploy.sh`.
+
+#### Uninstalling Auto-Start
+
+```bash
+./scripts/uninstall-launchd.sh
+```
+
+### Docker Deployment
+
 Create a `Dockerfile`:
 
 ```dockerfile
@@ -486,11 +630,13 @@ docker run -p 3999:3999 \
 | `DATA_DIR` / `SAMPOLIO_DATA_DIR` | Custom data directory path | No | `~/.sampolio/data` |
 | `PORT` / `SAMPOLIO_PORT` | Server port | No | `3999` |
 | `HOSTNAME` / `SAMPOLIO_HOST` | Server hostname | No | `0.0.0.0` |
+| `TRUSTED_PROXY_HOPS` | Reverse proxies in front of the app; the client IP used for rate limiting and login lockout is read from that many `X-Forwarded-For` entries from the right. `0` = no proxy (header ignored) | No | `1` |
+| `SAMPOLIO_SECRETS_DIR` | Where the launch scripts keep generated `AUTH_SECRET` / `ENCRYPTION_KEY` files | No | `~/.sampolio/secrets` |
 | `ENABLE_BANKING_APP_ID` | Enable Banking application ID (bank sync) | No | - |
 | `ENABLE_BANKING_REDIRECT_URL` | Consent callback URL (`<public-url>/api/bank/callback`) | No | - |
 | `ENABLE_BANKING_PRIVATE_KEY_FILE` | Path to the RS256 private key PEM (0600, outside the repo) | No | - |
 
-*Auto-generated if not provided, but using a `.env` file with fixed values is recommended for production.
+*Auto-generated by the launch scripts into `~/.sampolio/secrets/` (outside the data directory, so data backups don't carry the key) if not provided; an existing `<data dir>/.encryption_key` from older installs is still read. The scripts refuse to generate a new `ENCRYPTION_KEY` when encrypted data already exists. Back the key up separately from the data.
 
 > **Bank sync** is fully optional. Leave the three `ENABLE_BANKING_*` variables unset and the feature hard-disables itself (no network calls, a "not configured" notice in Settings). When set, the consent callback URL must be publicly reachable.
 

@@ -72,8 +72,10 @@ export function AccountPanel({ isDark }: AccountPanelProps) {
         try {
             const result = await changeMyPassword(data);
             if (result.success) {
-                toast.success('Password updated', 'Use your new password next time you sign in.');
+                // A new password ends every session, this one included.
+                toast.success('Password updated', 'All devices have been signed out. Sign in with your new password.');
                 reset();
+                await signOut({ callbackUrl: '/auth/signin' });
             } else {
                 toast.error('Could not update password', result.error);
             }

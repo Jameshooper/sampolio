@@ -24,7 +24,14 @@ import type {
 // is deliberately minimal (an id plus whatever else the export wrote):
 // loose objects let unknown/new fields survive an export → import round-trip
 // across app versions.
-const entityRow = z.looseObject({ id: z.string().min(1) });
+// Ids become file and directory names on import, so only the shape the app
+// itself generates (uuid v4) is accepted — never a path such as `../user`.
+export const SAFE_ENTITY_ID = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Invalid record id');
+const entityRow = z.looseObject({ id: SAFE_ENTITY_ID });
+
+// Fields that belong to a user account record and must never arrive via a
+// backup (an import is data, not an account change).
+const ACCOUNT_RECORD_KEYS = ['passwordHash', 'role', 'email', 'isActive', 'sessionVersion'];
 
 const accountRow = entityRow.extend({
   recurringItems: z.array(entityRow),
@@ -58,7 +65,10 @@ export const dataExportSchema = z.object({
       adjustments: z.array(entityRow),
       sessions: z.array(entityRow),
     }),
-    preferences: z.looseObject({}).nullable(),
+    preferences: z
+      .looseObject({})
+      .nullable()
+      .refine((p) => !p || !ACCOUNT_RECORD_KEYS.some((k) => k in p), 'Preferences contain account fields'),
   }),
   notIncluded: z.array(z.string()),
 });

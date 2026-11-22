@@ -12,6 +12,7 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
 } from './encryption';
 import { createRecurringItem, updateRecurringItem, deleteRecurringItem } from './recurring-items';
 import { calculateNetSalary } from '../salary-utils';
@@ -19,11 +20,11 @@ import { calculateNetSalary } from '../salary-utils';
 export { calculateNetSalary };
 
 function getSalaryConfigsDir(userId: string, accountId: string): string {
-  return path.join(getUserDir(userId), 'accounts', accountId, 'salary');
+  return path.join(getUserDir(userId), 'accounts', assertSafeId(accountId), 'salary');
 }
 
 function getSalaryConfigFile(userId: string, accountId: string, configId: string): string {
-  return path.join(getSalaryConfigsDir(userId, accountId), `${configId}.enc`);
+  return path.join(getSalaryConfigsDir(userId, accountId), `${assertSafeId(configId)}.enc`);
 }
 
 export async function getSalaryConfigs(userId: string, accountId: string): Promise<SalaryConfig[]> {

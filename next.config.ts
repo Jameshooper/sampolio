@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV !== 'production';
+
 const securityHeaders = [
   // Prevent clickjacking
   {
@@ -36,7 +38,11 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Required for Next.js
+      // 'unsafe-inline' is still required for Next's inline RSC/bootstrap
+      // scripts (no per-request nonce: pages are partially prerendered).
+      // 'unsafe-eval' is only needed by the dev server's React Refresh.
+      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
+      "object-src 'none'",
       "worker-src 'self'", // Service worker (PWA)
       "style-src 'self' 'unsafe-inline'", // Required for PrimeReact
       "img-src 'self' data: blob:",

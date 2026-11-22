@@ -1,21 +1,13 @@
 'use server';
 
 import { z } from 'zod';
-import { createUser, findUserByEmail, getAllUsers } from '@/lib/db/users';
+import { passwordPolicySchema as passwordSchema } from '@/lib/schemas/auth.schema';
+import { createUser, findUserByEmail, isFirstUserSetup, FirstUserTakenError } from '@/lib/db/users';
 import { isSelfSignupEnabled } from '@/lib/db/app-settings';
 import type { ApiResponse } from '@/types';
 
-// Strong password requirements for production security
-const passwordSchema = z
-  .string()
-  .min(8, 'Password must be at least 8 characters')
-  .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-  .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-  .regex(/[0-9]/, 'Password must contain at least one number')
-  .regex(/[^a-zA-Z0-9]/, 'Password must contain at least one special character');
-
 const signUpSchema = z.object({
-  email: z.string().email('Invalid email address').transform(e => e.toLowerCase().trim()),
+  email: z.string().email('Invalid email address').max(320).transform(e => e.toLowerCase().trim()),
   password: passwordSchema,
   name: z.string().min(2, 'Name must be at least 2 characters').max(100, 'Name is too long'),
 });
@@ -33,9 +25,10 @@ export async function signUp(
   try {
     const { email, password, name } = signUpSchema.parse(data);
 
-    // Check if this is the first user (always allow first user signup)
-    const allUsers = await getAllUsers();
-    const isFirstUser = allUsers.length === 0;
+    // The very first account may always be created (it becomes the admin).
+    // createUser re-checks this inside the users-index lock, so a concurrent
+    // sign-up can't slip through as a second "first user".
+    const isFirstUser = await isFirstUserSetup();
 
     // Check if self-signup is enabled (unless first user)
     if (!isFirstUser) {
@@ -54,8 +47,11 @@ export async function signUp(
       return { success: false, error: 'An account with this email already exists' };
     }
 
-    // Create the user
-    const user = await createUser(email, password, name);
+    // Create the user. When sign-up is closed, only the first-user path is
+    // allowed — refuse if someone else completed it in the meantime.
+    const user = await createUser(email, password, name, 'user', {
+      onlyIfFirstUser: !(await isSelfSignupEnabled()),
+    });
 
     return {
       success: true,
@@ -70,16 +66,21 @@ export async function signUp(
     if (error instanceof z.ZodError) {
       return { success: false, error: error.issues[0]?.message ?? 'Validation error' };
     }
-    console.error('Sign up error:', error);
+    if (error instanceof FirstUserTakenError) {
+      return { success: false, error: 'Self-signup is currently disabled. Please contact an administrator.' };
+    }
+    if (error instanceof Error && error.message.includes('already exists')) {
+      return { success: false, error: 'An account with this email already exists' };
+    }
+    console.error('Sign up error:', error instanceof Error ? error.message : error);
     return { success: false, error: 'Failed to create account' };
   }
 }
 
 export async function checkSignupEnabled(): Promise<ApiResponse<{ enabled: boolean; isFirstUser: boolean }>> {
   try {
-    const allUsers = await getAllUsers();
-    const isFirstUser = allUsers.length === 0;
-    
+    const isFirstUser = await isFirstUserSetup();
+
     if (isFirstUser) {
       return { success: true, data: { enabled: true, isFirstUser: true } };
     }

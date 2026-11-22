@@ -46,6 +46,9 @@ import {
   writeEncryptedFile,
   listFiles,
   deleteFile,
+  assertSafeId,
+  serialized,
+  withFileLock,
 } from './encryption';
 
 // ============================================================
@@ -59,25 +62,27 @@ function getMortgagesDir(): string {
   return path.join(getSharedDir(), 'mortgages');
 }
 function getMortgageFile(mortgageId: string): string {
-  return path.join(getMortgagesDir(), `${mortgageId}.enc`);
+  return path.join(getMortgagesDir(), `${assertSafeId(mortgageId)}.enc`);
 }
 function getRatesDir(mortgageId: string): string {
-  return path.join(getMortgagesDir(), mortgageId, 'rates');
+  return path.join(getMortgagesDir(), assertSafeId(mortgageId), 'rates');
 }
 function getCostsDir(mortgageId: string): string {
-  return path.join(getMortgagesDir(), mortgageId, 'costs');
+  return path.join(getMortgagesDir(), assertSafeId(mortgageId), 'costs');
 }
 function getExtraPaymentsDir(mortgageId: string): string {
-  return path.join(getMortgagesDir(), mortgageId, 'extra-payments');
+  return path.join(getMortgagesDir(), assertSafeId(mortgageId), 'extra-payments');
 }
 function getSnapshotsDir(mortgageId: string): string {
-  return path.join(getMortgagesDir(), mortgageId, 'snapshots');
+  return path.join(getMortgagesDir(), assertSafeId(mortgageId), 'snapshots');
 }
 function getActualsDir(mortgageId: string): string {
-  return path.join(getMortgagesDir(), mortgageId, 'actuals');
+  return path.join(getMortgagesDir(), assertSafeId(mortgageId), 'actuals');
 }
+const mortgageLockKey = (mortgageId: string) => `mortgage:${mortgageId}`;
+
 function getMemberIndexFile(userId: string): string {
-  return path.join(getSharedDir(), 'mortgage-members', `${userId}.enc`);
+  return path.join(getSharedDir(), 'mortgage-members', `${assertSafeId(userId, 'user id')}.enc`);
 }
 
 // ============================================================
@@ -94,17 +99,21 @@ export async function getMortgageIdsForUser(userId: string): Promise<string[]> {
 }
 
 async function addUserToMortgageIndex(userId: string, mortgageId: string): Promise<void> {
-  const ids = await getMortgageIdsForUser(userId);
-  if (!ids.includes(mortgageId)) {
-    ids.push(mortgageId);
-    await writeEncryptedFile(getMemberIndexFile(userId), { mortgageIds: ids });
-  }
+  await withFileLock(getMemberIndexFile(userId), async () => {
+    const ids = await getMortgageIdsForUser(userId);
+    if (!ids.includes(mortgageId)) {
+      ids.push(mortgageId);
+      await writeEncryptedFile(getMemberIndexFile(userId), { mortgageIds: ids });
+    }
+  });
 }
 
 async function removeUserFromMortgageIndex(userId: string, mortgageId: string): Promise<void> {
-  const ids = await getMortgageIdsForUser(userId);
-  const next = ids.filter((id) => id !== mortgageId);
-  await writeEncryptedFile(getMemberIndexFile(userId), { mortgageIds: next });
+  await withFileLock(getMemberIndexFile(userId), async () => {
+    const ids = await getMortgageIdsForUser(userId);
+    const next = ids.filter((id) => id !== mortgageId);
+    await writeEncryptedFile(getMemberIndexFile(userId), { mortgageIds: next });
+  });
 }
 
 // ============================================================
@@ -198,7 +207,7 @@ export async function createMortgage(
   return mortgage;
 }
 
-export async function updateMortgage(
+async function updateMortgageUnlocked(
   mortgageId: string,
   updates: UpdateMortgageRequest,
   byUserId: string
@@ -215,7 +224,7 @@ export async function updateMortgage(
   return updated;
 }
 
-export async function updateMortgageLoan(
+async function updateMortgageLoanUnlocked(
   mortgageId: string,
   loanId: string,
   updates: UpdateMortgageLoanRequest,
@@ -233,7 +242,7 @@ export async function updateMortgageLoan(
   return updated;
 }
 
-export async function deleteMortgage(mortgageId: string): Promise<boolean> {
+async function deleteMortgageUnlocked(mortgageId: string): Promise<boolean> {
   const mortgage = await getMortgageById(mortgageId);
   // Cascade sub-collections
   for (const dir of [
@@ -262,7 +271,7 @@ export async function deleteMortgage(mortgageId: string): Promise<boolean> {
 // MEMBERS
 // ============================================================
 
-export async function addMortgageMember(
+async function addMortgageMemberUnlocked(
   mortgageId: string,
   member: MortgageMember
 ): Promise<SharedMortgage | null> {
@@ -279,7 +288,7 @@ export async function addMortgageMember(
   return updated;
 }
 
-export async function removeMortgageMember(
+async function removeMortgageMemberUnlocked(
   mortgageId: string,
   userId: string
 ): Promise<SharedMortgage | null> {
@@ -295,7 +304,7 @@ export async function removeMortgageMember(
   return updated;
 }
 
-export async function updateMortgageMember(
+async function updateMortgageMemberUnlocked(
   mortgageId: string,
   userId: string,
   updates: UpdateMortgageMemberRequest
@@ -325,7 +334,7 @@ export async function getRates(mortgageId: string): Promise<MortgageRateEntry[]>
     .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
 }
 
-export async function setRate(
+async function setRateUnlocked(
   mortgageId: string,
   data: SetMortgageRateRequest
 ): Promise<MortgageRateEntry> {
@@ -349,7 +358,7 @@ export async function setRate(
   return entry;
 }
 
-export async function deleteRate(mortgageId: string, rateId: string): Promise<boolean> {
+async function deleteRateUnlocked(mortgageId: string, rateId: string): Promise<boolean> {
   await deleteFile(path.join(getRatesDir(mortgageId), `${rateId}.enc`));
   return true;
 }
@@ -368,7 +377,7 @@ export async function getCosts(mortgageId: string): Promise<MortgageCostEntry[]>
     .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
 }
 
-export async function setCost(
+async function setCostUnlocked(
   mortgageId: string,
   data: SetMortgageCostRequest
 ): Promise<MortgageCostEntry> {
@@ -397,7 +406,7 @@ export async function setCost(
   return entry;
 }
 
-export async function deleteCost(mortgageId: string, costId: string): Promise<boolean> {
+async function deleteCostUnlocked(mortgageId: string, costId: string): Promise<boolean> {
   await deleteFile(path.join(getCostsDir(mortgageId), `${costId}.enc`));
   return true;
 }
@@ -416,7 +425,7 @@ export async function getExtraPayments(mortgageId: string): Promise<MortgageExtr
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export async function createExtraPayment(
+async function createExtraPaymentUnlocked(
   mortgageId: string,
   data: CreateMortgageExtraPaymentRequest
 ): Promise<MortgageExtraPayment> {
@@ -436,7 +445,7 @@ export async function createExtraPayment(
   return entry;
 }
 
-export async function deleteExtraPayment(mortgageId: string, paymentId: string): Promise<boolean> {
+async function deleteExtraPaymentUnlocked(mortgageId: string, paymentId: string): Promise<boolean> {
   await deleteFile(path.join(getExtraPaymentsDir(mortgageId), `${paymentId}.enc`));
   return true;
 }
@@ -455,7 +464,7 @@ export async function getBalanceSnapshots(mortgageId: string): Promise<MortgageB
     .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
 }
 
-export async function createBalanceSnapshot(
+async function createBalanceSnapshotUnlocked(
   mortgageId: string,
   data: CreateMortgageBalanceSnapshotRequest
 ): Promise<MortgageBalanceSnapshot> {
@@ -483,7 +492,7 @@ export async function createBalanceSnapshot(
   return entry;
 }
 
-export async function deleteBalanceSnapshot(mortgageId: string, snapshotId: string): Promise<boolean> {
+async function deleteBalanceSnapshotUnlocked(mortgageId: string, snapshotId: string): Promise<boolean> {
   await deleteFile(path.join(getSnapshotsDir(mortgageId), `${snapshotId}.enc`));
   return true;
 }
@@ -502,7 +511,7 @@ export async function getActuals(mortgageId: string): Promise<MortgageActualEntr
     .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth) || a.loanId.localeCompare(b.loanId));
 }
 
-export async function setActual(
+async function setActualUnlocked(
   mortgageId: string,
   input: MortgageActualInput
 ): Promise<MortgageActualEntry> {
@@ -540,7 +549,7 @@ export async function setActual(
   return entry;
 }
 
-export async function deleteAllActuals(mortgageId: string): Promise<void> {
+async function deleteAllActualsUnlocked(mortgageId: string): Promise<void> {
   const dir = getActualsDir(mortgageId);
   try {
     const files = await listFiles(dir);
@@ -552,7 +561,7 @@ export async function deleteAllActuals(mortgageId: string): Promise<void> {
 
 /** Remove every recorded actual for one month (all loans). Used to "un-reconcile"
  * a month so it reverts to a projected forecast. Returns the number deleted. */
-export async function deleteActualsForMonth(mortgageId: string, yearMonth: string): Promise<number> {
+async function deleteActualsForMonthUnlocked(mortgageId: string, yearMonth: string): Promise<number> {
   const dir = getActualsDir(mortgageId);
   const toDelete = (await getActuals(mortgageId)).filter((a) => a.yearMonth === yearMonth);
   for (const a of toDelete) await deleteFile(path.join(dir, `${a.id}.enc`));
@@ -560,12 +569,33 @@ export async function deleteActualsForMonth(mortgageId: string, yearMonth: strin
 }
 
 /** Bulk import. When replaceAll is true, clears existing actuals first. */
-export async function bulkSetActuals(
+async function bulkSetActualsUnlocked(
   mortgageId: string,
   inputs: MortgageActualInput[],
   replaceAll = false
 ): Promise<number> {
-  if (replaceAll) await deleteAllActuals(mortgageId);
-  for (const input of inputs) await setActual(mortgageId, input);
+  if (replaceAll) await deleteAllActualsUnlocked(mortgageId);
+  for (const input of inputs) await setActualUnlocked(mortgageId, input);
   return inputs.length;
 }
+
+// Every mutation of an existing mortgage is serialized per mortgage id (its
+// files are shared by all members; read-modify-write — see withFileLock).
+export const updateMortgage = serialized(mortgageLockKey, updateMortgageUnlocked);
+export const updateMortgageLoan = serialized(mortgageLockKey, updateMortgageLoanUnlocked);
+export const deleteMortgage = serialized(mortgageLockKey, deleteMortgageUnlocked);
+export const addMortgageMember = serialized(mortgageLockKey, addMortgageMemberUnlocked);
+export const removeMortgageMember = serialized(mortgageLockKey, removeMortgageMemberUnlocked);
+export const updateMortgageMember = serialized(mortgageLockKey, updateMortgageMemberUnlocked);
+export const setRate = serialized(mortgageLockKey, setRateUnlocked);
+export const deleteRate = serialized(mortgageLockKey, deleteRateUnlocked);
+export const setCost = serialized(mortgageLockKey, setCostUnlocked);
+export const deleteCost = serialized(mortgageLockKey, deleteCostUnlocked);
+export const createExtraPayment = serialized(mortgageLockKey, createExtraPaymentUnlocked);
+export const deleteExtraPayment = serialized(mortgageLockKey, deleteExtraPaymentUnlocked);
+export const createBalanceSnapshot = serialized(mortgageLockKey, createBalanceSnapshotUnlocked);
+export const deleteBalanceSnapshot = serialized(mortgageLockKey, deleteBalanceSnapshotUnlocked);
+export const setActual = serialized(mortgageLockKey, setActualUnlocked);
+export const deleteAllActuals = serialized(mortgageLockKey, deleteAllActualsUnlocked);
+export const deleteActualsForMonth = serialized(mortgageLockKey, deleteActualsForMonthUnlocked);
+export const bulkSetActuals = serialized(mortgageLockKey, bulkSetActualsUnlocked);

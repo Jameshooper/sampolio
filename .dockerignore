@@ -1,0 +1,18 @@
+# Never send secrets, real data or local state into the image build context.
+.env
+.env.*
+data
+*.pem
+*.numbers
+*.csv
+.git
+.github
+node_modules
+.next
+.next-prod
+coverage
+dist
+plans
+.claude/settings.local.json
+npm-debug.log*
+.pnpm-debug.log*

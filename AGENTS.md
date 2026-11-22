@@ -22,10 +22,16 @@ optional, read-only, and documented in [`docs/bank-sync.md`](docs/bank-sync.md).
   one global `ConfirmDialog`; never mount another. Server actions are the
   backend boundary; the only API routes are NextAuth, the bank callback, and
   the session-gated avatar route.
-- File DB writes are read-modify-write and have no cross-process locking.
-  Shared mortgages and split groups are action-layer access-controlled because
-  their files live under `data/shared/`; split writes use the single-node group
-  mutex. Keep those limits visible in [`docs/known-gaps.md`](docs/known-gaps.md).
+- File DB writes are atomic, read-modify-write, and serialized only
+  in-process (`updateEncryptedFile`/`serialized`; no cross-process locking).
+  Every client-supplied id reaches the filesystem only through `assertSafeId`
+  path builders. Shared mortgages and split groups are action-layer
+  access-controlled because their files live under `data/shared/`; split writes
+  use the single-node group mutex. Keep those limits visible in
+  [`docs/known-gaps.md`](docs/known-gaps.md).
+- Treat stored text as hostile wherever it becomes markup: ECharts tooltip
+  formatters must `escapeHtml` names. Use the shared `passwordPolicySchema` and
+  `getClientIp` (trusted proxy hops) rather than local variants.
 
 ## Where to look
 
@@ -119,7 +125,7 @@ the nested action/component/DB guides. Do not duplicate their mechanics here.
 
 Known limitations include file-write races, no cross-currency conversion,
 Finnish locale, bounded bank retrospective depth, bank-specific transaction
-gaps, in-memory cookie-based rate limiting, plaintext avatar files excluded
+gaps, in-memory single-process rate limits and login counters, plaintext avatar files excluded
 from JSON backups, and local-only real-data parity. Keep the root limitations
 and [`docs/known-gaps.md`](docs/known-gaps.md) honest.
 

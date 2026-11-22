@@ -38,8 +38,9 @@ if [ ! -f "$REPO_ROOT/$NEXT_DIST_DIR/BUILD_ID" ]; then
     exit 1
 fi
 
-# Create data directory if it doesn't exist
+# Create data directory if it doesn't exist (private to this account)
 mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR"
 
 # Load .env file if it exists
 if [ -f "$REPO_ROOT/.env" ]; then
@@ -50,36 +51,15 @@ if [ -f "$REPO_ROOT/.env" ]; then
     set +a
 fi
 
-# Generate a random AUTH_SECRET if not set
-if [ -z "$AUTH_SECRET" ]; then
-    CONFIG_FILE="$DATA_DIR/.auth_secret"
-    if [ -f "$CONFIG_FILE" ]; then
-        export AUTH_SECRET=$(cat "$CONFIG_FILE")
-    else
-        export AUTH_SECRET=$(openssl rand -base64 32)
-        echo "$AUTH_SECRET" > "$CONFIG_FILE"
-        chmod 600 "$CONFIG_FILE"
-        echo -e "${YELLOW}Generated new AUTH_SECRET (saved for future runs)${NC}"
-    fi
-fi
-
-# Generate a random ENCRYPTION_KEY if not set
-if [ -z "$ENCRYPTION_KEY" ]; then
-    ENCRYPTION_CONFIG_FILE="$DATA_DIR/.encryption_key"
-    if [ -f "$ENCRYPTION_CONFIG_FILE" ]; then
-        export ENCRYPTION_KEY=$(cat "$ENCRYPTION_CONFIG_FILE")
-    else
-        export ENCRYPTION_KEY=$(openssl rand -hex 32)
-        echo "$ENCRYPTION_KEY" > "$ENCRYPTION_CONFIG_FILE"
-        chmod 600 "$ENCRYPTION_CONFIG_FILE"
-        echo -e "${YELLOW}Generated new ENCRYPTION_KEY (saved for future runs)${NC}"
-    fi
-fi
+# Resolve AUTH_SECRET / ENCRYPTION_KEY (env → secrets dir → legacy data-dir files)
+# shellcheck source=lib-secrets.sh
+. "$SCRIPT_DIR/lib-secrets.sh"
+sampolio_load_secrets "$DATA_DIR" || exit 1
 
 # Persist or restore AUTH_URL (needed for correct redirects behind a reverse proxy)
 AUTH_URL_CONFIG_FILE="$DATA_DIR/.auth_url"
 if [ -n "$AUTH_URL" ]; then
-    echo "$AUTH_URL" > "$AUTH_URL_CONFIG_FILE"
+    ( umask 077 && echo "$AUTH_URL" > "$AUTH_URL_CONFIG_FILE" )
     chmod 600 "$AUTH_URL_CONFIG_FILE"
 elif [ -f "$AUTH_URL_CONFIG_FILE" ]; then
     export AUTH_URL=$(cat "$AUTH_URL_CONFIG_FILE")

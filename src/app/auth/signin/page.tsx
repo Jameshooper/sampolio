@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, Suspense, useEffect, useRef } from 'react';
+import { safeCallbackPath } from '@/lib/safe-redirect';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -24,7 +25,7 @@ const LOCKOUT_WARNING_THRESHOLD = 9;
 function SignInForm() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const callbackUrl = searchParams.get('callbackUrl') || '/';
+    const callbackUrl = safeCallbackPath(searchParams.get('callbackUrl'));
 
     const {
         register,

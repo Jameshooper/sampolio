@@ -15,14 +15,14 @@ mechanics live in [`features.md`](features.md), [`projections-and-reconciliation
 | Components | `primereact` | ^10.9.9 (+ `primeicons` ^7.0.0, `react-icons` ^5.7.0, `lucide-react` 1.42.0) |
 | Styling | `tailwindcss` | ^4.3.3 (via `@tailwindcss/postcss`) |
 | Auth | `next-auth` | 5.0.0-beta.32 (+ `bcryptjs` ^3.0.3 for password hashing) |
-| Validation | `zod` | ^4.5.4 |
+| Validation | `zod` | ^4.6.7 |
 | Forms | `react-hook-form` ^7.87.0 + `@hookform/resolvers` ^5.9.1 |
 | Charts | `echarts` ^6.1.0 (+ `echarts-for-react` ^3.0.6), `chart.js` ^4.5.1 |
 | Avatar crop | `react-easy-crop` | ^6.2.3 (lazy-loaded in the avatar editor) |
 | Dates | `date-fns` | ^4.4.0 |
 | JWT (bank API) | `jose` | ^6.2.12 (RS256 for Enable Banking) |
 | IDs | `uuid` | ^14.0.2 |
-| Tests | `vitest` ^5.0.0, `@testing-library/react` ^16.3.3, `jsdom` ^30.0.1 |
+| Tests | `vitest` ^5.1.1, `@testing-library/react` ^16.3.3, `jsdom` ^31.0.1 |
 
 Package manager: **pnpm 12.3.4** (`packageManager` field). Node: **>= 26** (`engines`; `.nvmrc` = `v26`).
 There is no external database and no ORM — persistence is encrypted JSON files on disk.
@@ -140,12 +140,31 @@ concrete module path (e.g. `import { getBankConnections } from '@/lib/actions/ba
 ## 6. DB layer & on-disk storage
 
 Each entity has a module in `src/lib/db/` doing read-modify-write of `.enc` files
-(no barrel — import the concrete module).
+(no barrel — import the concrete module). Storage invariants (all in
+`src/lib/db/encryption.ts`):
+
+- **Ids are single path segments.** Every path builder passes record ids through
+  `assertSafeId` (`^[A-Za-z0-9_-]{1,64}$`; uuids and `YYYY-MM` chunk names), and
+  `getUserDir` validates the user id. The I/O helpers (`readEncryptedFile`,
+  `writeEncryptedFile`, `deleteFile`, `listFiles`, `fileExists`, `ensureDir`) also
+  refuse any path that resolves outside `getDataDir()` (`assertInsideDataDir`).
+  Action loaders map an invalid id to "not found" (`isSafeId`).
+- **Writes are atomic and private**: temp file (`0600`) + fsync + rename
+  (`writeFileAtomic`); directories are created `0700`; `listFiles` hides `*.tmp`.
+- **Read-modify-write is serialized in-process** with `withFileLock` /
+  `updateEncryptedFile` / `serialized(lockKeyOf, fn)` (lock table on `globalThis`, so
+  route handlers and server actions share it; not reentrant, not cross-process).
+  Locked today: users index + per-user `user.enc`, preferences, app settings,
+  reconciliation (per user dir; also held by the backup import), each shared mortgage
+  (`mortgage:{id}`), and both member reverse indexes. Split groups keep their
+  action-layer `withGroupLock`; bank files rely on the sync engine's per-connection lock.
 Root is `getDataDir()` = `$DATA_DIR` or `<cwd>/data`. Exact layout (file names from code):
 
 ```
 data/
-├── .encryption_key  .auth_secret  .auth_url    # secrets as dot-files; injected as env by launch config / prod plist
+├── .encryption_key  .auth_secret               # legacy secret location, still read by the launch scripts (new installs: ~/.sampolio/secrets/)
+├── .auth_url                                   # AUTH_URL persisted by the launch scripts
+├── revoked-sessions.enc                        # signed-out session ids (db/revoked-sessions.ts)
 ├── app-settings.enc                            # AppSettings (db/app-settings.ts)
 ├── users-index.enc                             # email → userId index (db/users.ts)
 ├── users/{userId}/
@@ -234,33 +253,59 @@ batch) fetch a page's whole dataset in one cached call with the union of tags.
 `src/lib/auth.ts` — NextAuth v5, two Credentials providers:
 
 - **`credentials`**: Zod-validated email+password, `bcryptjs` verification via
-  `verifyPassword` (`src/lib/db/users.ts`), account lockout (`isAccountLocked`,
-  `recordFailedLogin` — also recorded for nonexistent emails to block enumeration),
-  `isActive` check.
+  `verifyPassword` (`src/lib/db/users.ts`). Lockout (`isAccountLocked` /
+  `recordFailedLogin`) counts failures per (email, client IP) — 10 in 15 min lock that
+  pair — and per email from any IP — 50 lock the account — for 15 min; the client IP
+  comes from `getClientIp` (`src/lib/client-ip.ts`, trusted hops only). Unknown or
+  inactive accounts run `verifyDummyPassword` (a real cost-12 bcrypt compare) so
+  timing doesn't reveal which emails exist. Log lines carry a hashed `logTag(email)`,
+  never the address; the Auth.js logger drops `CredentialsSignin` stack traces.
 - **`dev-bypass`**: only registered when `NODE_ENV !== 'production'` **and**
   `DEV_AUTH_BYPASS` is set; signs in as that email with no password. Driven by the
   `/dev-login` GET route; `src/proxy.ts` additionally redirects cookie-less dev requests for
   `/` and the auth pages straight to `/dev-login`.
 
-Session strategy is **JWT** (`maxAge` 30 days, `updateAge` 1h); the token carries
-`id`/`email`/`name`/`role` (`UserRole`), surfaced via `src/types/next-auth.d.ts`. Cookie name
-is `__Secure-authjs.session-token` in production, `authjs.session-token` otherwise. Sign-up is
-gated by app settings (`checkSignupEnabled` in `src/lib/actions/auth.ts` reads
-`cachedGetAppSettings`; toggled from the admin panel). In production an outer
+Session strategy is **JWT** (`maxAge` 30 days rolling, `updateAge` 1h); the token carries
+`id`/`email`/`name`/`role` (`UserRole`) plus `sid` (session id, stable across refreshes)
+and `sv` (`User.sessionVersion` at sign-in), surfaced via `src/types/next-auth.d.ts`.
+**Every request re-validates** in the `jwt` callback (`validateSessionClaims`,
+`src/lib/session-validation.ts`): the `sid` must not be signed out
+(`src/lib/db/revoked-sessions.ts`, written by the `signOut` event), and the account must
+exist, be active and still carry the same `sessionVersion` — bumped by password change,
+deactivation, deletion and role change (`src/lib/db/users.ts`). Returning `null` clears the
+cookie. Tokens without `sid` (issued before this check existed) are rejected once.
+Cookie name is `__Secure-authjs.session-token` in production, `authjs.session-token`
+otherwise. Sign-up is gated by app settings (`checkSignupEnabled` in
+`src/lib/actions/auth.ts`); the first-account (admin) path is decided by
+`isFirstUserSetup` (empty index **and** no user directories) and re-checked inside the
+users-index lock by `createUser(..., { onlyIfFirstUser })`. One password policy
+(`passwordPolicySchema`, `src/lib/schemas/auth.schema.ts`) covers sign-up, admin-created
+users, admin resets and self-service changes. In production an outer
 **Cloudflare Access** layer authenticates before requests ever reach the app — see
 [`operations.md`](operations.md).
 
 ## 10. Middleware & security
 
-`src/proxy.ts` (Edge runtime). Matcher: everything **except** `_next/static`, `_next/image`,
+`src/proxy.ts` (Node runtime — Next 16 proxies always run on Node). Matcher: everything **except** `_next/static`, `_next/image`,
 `favicon.ico`, `manifest.webmanifest`, `sw.js`, `offline.html`, `icons`, `themes`, and
 `*.png|jpg|svg` (PWA/install assets must load without auth). Behavior:
 
-- **Rate limiting** (in-memory `Map` per IP, 1-minute window, resets on restart):
-  unauthenticated requests to `/api/auth*` or `/auth/*` → **20/min**; all other
-  unauthenticated requests → **300/min**. Requests bearing a session cookie are exempt
-  (server actions burst hundreds of POSTs per page load). 429 with `Retry-After`.
-- **Auth redirect** for cookie-less `/` and every path in `PROTECTED_PREFIXES` (see §3).
+- **Signed-in = verified, not present**: `hasValidSession` decrypts the session cookie
+  with `AUTH_SECRET` (`next-auth/jwt` `decode`); a cookie that merely has the right name
+  counts as signed out. Revocation is checked later by `auth()`.
+- **Rate limiting** (in-memory `Map` per client IP from `getClientIp`, 1-minute window,
+  resets on restart): credential posts (`POST /api/auth/callback*`, `POST /auth/*`,
+  i.e. sign-in and sign-up) → **20/min** whether signed in or not; other signed-out
+  `/api/auth*` / `/auth/*` traffic shares that bucket; all other signed-out requests →
+  **300/min**. Verified sessions are exempt from the general limit (server actions burst
+  during page loads). 429 with `Retry-After`.
+- **Body cap**: signed-out server-action POSTs (`Next-Action` header) without a
+  `Content-Length` or above 64 KB get 413 — the 20 MB action body limit in
+  `next.config.ts` exists only for the signed-in backup import.
+- **Client IP**: `X-Forwarded-For` is trusted only for `TRUSTED_PROXY_HOPS` entries from
+  the right (default 1 — Caddy and cloudflared both set it); `0` ignores the header.
+- **Auth redirect** for `/` and every path in `PROTECTED_PREFIXES` (see §3) without a
+  verified session cookie.
 - **Stale-cookie recovery**: a session cookie on `/auth/signin|signup` means the server-side
   `auth()` rejected the JWT — the middleware deletes the cookie to break the redirect loop.
 
@@ -268,12 +313,17 @@ Security headers are set for every route in `next.config.ts` (`headers()`):
 `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
 `Referrer-Policy: strict-origin-when-cross-origin`, `X-DNS-Prefetch-Control`,
 `Permissions-Policy` (camera/mic/geo/topics off), `Strict-Transport-Security`, and a CSP
-(key directives: `default-src 'self'`; `script-src` allows `unsafe-inline`/`unsafe-eval`
-for Next; `style-src 'unsafe-inline'` for PrimeReact; `worker-src 'self'` for the service
+(key directives: `default-src 'self'`; `script-src 'self' 'unsafe-inline'` — inline is
+needed for Next's bootstrap/RSC scripts, `unsafe-eval` only in development for React
+Refresh; `object-src 'none'`; `style-src 'unsafe-inline'` for PrimeReact; `worker-src 'self'` for the service
 worker; `frame-ancestors 'none'`; plus `img-src`/`font-src`/`connect-src`/`base-uri`/
 `form-action` all `'self'`-scoped and `upgrade-insecure-requests` — full list in
 `next.config.ts`). `/sw.js` is additionally served `no-cache, no-store` with
-`Service-Worker-Allowed: /`. `poweredByHeader: false`.
+`Service-Worker-Allowed: /`. `poweredByHeader: false`. Because inline script is allowed,
+markup built from strings must escape user text: ECharts tooltip formatters return HTML,
+so every name/category/series/axis string goes through `escapeHtml`
+(`src/lib/html-escape.ts`); `src/lib/security-helpers.test.ts` fails on a raw
+`${x.name}`-style interpolation inside an HTML template literal in `src/components`.
 
 ## 11. Instrumentation & background work
 
@@ -365,7 +415,16 @@ wraps components in ThemeProvider). ~50 test files:
   `reconcile-links`, `link-identity`, `apply-link-balances`, `scheduler`,
   `card-payment-match`, `repair-booking-dates`
 - **DB layer** (`src/lib/db/*.test.ts`): `encryption`, `budgets`, `planned-items`,
-  `reconciliation`, `data-transfer`, `taxed-income`
+  `reconciliation`, `data-transfer`, `taxed-income`, `path-safety` (traversal ids,
+  data-dir containment, import id/field rules, atomic 0600 writes, GCM tag length),
+  `concurrency-and-sessions` (first-user race, locked read-modify-write, lockout,
+  dummy-bcrypt timing, session revocation)
+- **Security & regression** (`src/lib/*.test.ts`, `src/proxy.test.ts`,
+  `src/lib/actions/security.test.ts`): `security-helpers` (client IP, callback-path
+  sanitiser, `escapeHtml`, the raw-tooltip-interpolation guard, member-lookup throttle),
+  `calculation-regressions` (recurrence month-end/leap days, cents rounding, split
+  weights, per-diem time-zone independence, projection length cap), the proxy (forged
+  cookies, XFF rotation, body cap) and the audit's exploit inputs through real actions
 - **Schemas** (`src/lib/schemas/*.test.ts`): `auth.schema`, `cashflow-schemas`,
   `occurrence-override.schema`
 - **Convenience engines** (`src/lib/*.test.ts`): `category-utils`,
@@ -383,14 +442,15 @@ wraps components in ThemeProvider). ~50 test files:
   actions mocked with `vi.mock`)
 
 **No coverage exists for**: most pages, server actions (auth/validation/cache-tag
-behavior — except a representative goals/trips/user-preferences slice), the bank client/connect/sync
-modules, `proxy.ts`, and there are no e2e/browser tests. Manual
+behavior — except a representative goals/trips/user-preferences slice and the security
+regression suite), the bank client/connect/sync modules, and there are no e2e/browser tests. Manual
 verification uses the `sampolio-preview` launch config + `preview_*` tools.
 
 ## 16. Tooling
 
-`package.json` scripts: `dev` (`next dev -p 4999`), `dev:preview` (same port, additionally
-sets `DEV_AUTH_BYPASS`), `build` (`copy-themes` + `next build`), `start`, `lint` (`eslint`),
+`package.json` scripts: `dev` (`next dev -p 4999 -H 127.0.0.1` — loopback only, since
+`dev:preview` enables a password-less login; pass `-H 0.0.0.0` deliberately to test from
+another device), `dev:preview` (same, additionally sets `DEV_AUTH_BYPASS`), `build` (`copy-themes` + `next build`), `start`, `lint` (`eslint`),
 `test` / `test:watch` / `test:coverage` (vitest), `copy-themes` + `postinstall`
 (`scripts/copy-themes.mjs` — recolors PrimeReact's `lara-{light,dark}-green` theme CSS into
 `public/themes/sampolio-{light,dark}.css`; the hand-authored `public/themes/glass-overrides.css`
@@ -400,6 +460,11 @@ liquid-glass override layer is loaded after the theme by `theme-provider.tsx`).
 (`pnpm dev` or the `.claude/launch.json` `sampolio-preview` config) runs on **4999** against a
 `./data` copy — no collision with prod. Prod builds into `.next-prod` via
 `NEXT_DIST_DIR`; dev uses `.next`.
+
+CI: `.github/workflows/ci.yml` (read-only token, SHA-pinned actions) runs install →
+lint → `tsc --noEmit` → test → `pnpm audit --prod` → build on pushes to `main` and PRs;
+`.github/dependabot.yml` opens weekly npm and monthly Actions update PRs. Transitive
+security floors live in `pnpm-workspace.yaml` `overrides`.
 
 Lint: flat config `eslint.config.mjs` = `eslint-config-next/core-web-vitals` +
 `eslint-config-next/typescript`, ignoring `.next/`, `.next-prod/`, `out/`, `build/`.

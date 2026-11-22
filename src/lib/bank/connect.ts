@@ -20,7 +20,7 @@ import {
   writeBankSessionSecret,
   findConnectionByState,
 } from '@/lib/db/bank-connections';
-import { startAuthorization, createSession, BankApiError, type StartAuthorizationInput } from './client';
+import { startAuthorization, createSession, BankApiError, redactBankError, type StartAuthorizationInput } from './client';
 import { mapSessionAccounts } from './mappers';
 import { reconcileLinks } from './reconcile-links';
 import { findAspspInfo } from './aspsp-info';
@@ -261,7 +261,7 @@ export async function completeConnection(
       psuUserAgent: psu?.psuUserAgent,
     });
   } catch (err) {
-    console.error('[bank] backfill after consent failed:', err);
+    console.error('[bank] backfill after consent failed:', redactBankError(err));
   }
 
   invalidate(userId, connection.id);

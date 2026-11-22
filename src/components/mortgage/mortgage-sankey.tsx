@@ -13,6 +13,7 @@ import { describeMortgageSankey } from '@/lib/chart-descriptions';
 import { formatCurrency } from '@/lib/constants';
 import { buildMortgageSankeySnapshot } from '@/lib/mortgage-utils';
 import type { SharedMortgage, MortgageProjectionMonth, Currency } from '@/types';
+import { escapeHtml } from '@/lib/html-escape';
 
 echarts.use([SankeyChart, TooltipComponent, CanvasRenderer]);
 
@@ -135,11 +136,11 @@ export function MortgageOwnershipSankey({
         trigger: 'item' as const,
         formatter: (params: Record<string, unknown>) => {
           if (params.dataType === 'node') {
-            return `<strong>${params.name}</strong><br/>${formatCurrency(params.value as number, currency)}`;
+            return `<strong>${escapeHtml(params.name)}</strong><br/>${formatCurrency(params.value as number, currency)}`;
           }
           if (params.dataType === 'edge') {
             const d = params.data as { source: string; target: string; value: number };
-            return `${d.source} → ${d.target}<br/>${formatCurrency(d.value, currency)}`;
+            return `${escapeHtml(d.source)} → ${escapeHtml(d.target)}<br/>${formatCurrency(d.value, currency)}`;
           }
           return '';
         },

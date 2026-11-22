@@ -47,7 +47,8 @@ Consent (a time-boxed PSD2 authorization requiring SCA) is orchestrated by `src/
 3. **Callback** — `GET src/app/api/bank/callback/route.ts` (one of the app's two non-NextAuth API routes, alongside the avatar image endpoint):
    - Requires an authenticated Sampolio session (same hostname, so the cookie is present); otherwise bounces to sign-in.
    - `?error=` → redirect to `/settings?bankError=sca_declined`; missing `code`/`state` → `bankError=missing_params`.
-   - Redirect URLs are built against `externalBase()` — `AUTH_URL` first, then `x-forwarded-*` headers — because behind Caddy/Cloudflare the raw `request.url` is the internal bind address.
+   - Redirect URLs are built against `externalBase()` — `AUTH_URL`, else the origin of `ENABLE_BANKING_REDIRECT_URL` (always set when the feature is on), never request headers — because behind Caddy/Cloudflare the raw `request.url` is the internal bind address and forwarded headers can be forged.
+   - The PSU IP is the client address from `getClientIp` (`src/lib/client-ip.ts`: the `X-Forwarded-For` entry added by the trusted proxy, per `TRUSTED_PROXY_HOPS`); a request that didn't come through the proxy sends none.
    - Calls `completeConnection(userId, code, state, psuIp)`.
 4. **Complete** — `completeConnection` (`connect.ts`):
    - **CSRF/replay check**: `findConnectionByState` (`src/lib/db/bank-connections.ts`) matches the `state` against this user's stored session secrets; no match → `null` → `bankError=invalid_state`.

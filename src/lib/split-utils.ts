@@ -22,7 +22,13 @@ import type {
 
 /** Euros (a possibly-fractional number) → integer cents, drift-free. */
 export function toCents(euros: number): number {
-  return Math.round(euros * 100);
+  // euros * 100 carries binary-float error (1.005 * 100 = 100.49999…), which
+  // Math.round would then round the wrong way. Rounding to 12 significant
+  // digits first removes that error while keeping every real cent value.
+  // Half-cents round away from zero for negatives too (Math.round(-100.5) is -100).
+  const cents = Number((euros * 100).toPrecision(12));
+  const rounded = Math.sign(cents) * Math.round(Math.abs(cents));
+  return rounded === 0 ? 0 : rounded;
 }
 
 /** Integer cents → euros (number). */
@@ -44,6 +50,9 @@ export interface ResolvedSplit {
  * largest-remainder method so the parts sum EXACTLY to amountCents.
  */
 function allocateByWeights(amountCents: number, ids: string[], weights: number[]): Record<string, number> {
+  if (weights.some((w) => !Number.isFinite(w) || w < 0)) {
+    throw new Error('Split weights must be zero or positive');
+  }
   const total = weights.reduce((a, b) => a + b, 0);
   if (ids.length === 0) return {};
   if (total <= 0) return allocateEqually(amountCents, ids);
@@ -108,6 +117,9 @@ export function resolveSplit(
       let sum = 0;
       for (const [id, c] of Object.entries(cfg)) {
         if (!memberIds.includes(id)) continue;
+        if (!Number.isFinite(c) || c < 0) {
+          throw new Error('Exact split amounts must be zero or positive');
+        }
         owedMap[id] = Math.round(c);
         sum += Math.round(c);
       }
@@ -205,26 +217,43 @@ export function suggestSettleUp(balances: SplitMemberBalance[]): SettleUpSuggest
 
 // ---------- recurrence (date-grained) ----------
 
-function stepDate(date: Date, interval: SplitInterval): Date {
+/**
+ * The n-th occurrence (n = 0 is the anchor), always computed from the anchor —
+ * never by stepping from the previous occurrence. Stepping drifts: Jan 31 →
+ * Feb 28 → Mar 28 → … sticks on the 28th forever, and Feb 29 → Feb 28 never
+ * returns to the 29th. From the anchor, month-end and leap days are clamped
+ * per occurrence only (Jan 31, Feb 28, Mar 31, Apr 30; 2028-02-29).
+ */
+function nthOccurrence(anchor: Date, interval: SplitInterval, n: number): Date {
   switch (interval) {
     case 'daily':
-      return addDays(date, 1);
+      return addDays(anchor, n);
     case 'weekly':
-      return addWeeks(date, 1);
+      return addWeeks(anchor, n);
     case 'biweekly':
-      return addWeeks(date, 2);
+      return addWeeks(anchor, 2 * n);
     case 'monthly':
-      return addMonths(date, 1);
+      return addMonths(anchor, n);
     case 'yearly':
-      return addYears(date, 1);
+      return addYears(anchor, n);
   }
+}
+
+/** Same billing period (month for monthly, year for yearly rules). */
+function samePeriod(a: Date, b: Date, interval: SplitInterval): boolean {
+  if (interval === 'monthly') return format(a, 'yyyy-MM') === format(b, 'yyyy-MM');
+  if (interval === 'yearly') return format(a, 'yyyy') === format(b, 'yyyy');
+  return false;
 }
 
 /**
  * The YYYY-MM-DD occurrence dates to materialize for a rule, from the first
  * not-yet-generated occurrence up to (and including) `upToInclusive`, bounded
  * by the rule's `endDate`. Returns [] when nothing is due. Idempotent: pass the
- * rule's `lastGeneratedThrough` to resume exactly after it.
+ * rule's `lastGeneratedThrough` to resume exactly after it. For monthly/yearly
+ * rules a period that already has an occurrence is skipped, so rules generated
+ * by the earlier step-from-previous logic (e.g. "03-28") don't get a second
+ * occurrence in the same month ("03-31") after upgrading.
  */
 export function generateOccurrenceDates(
   rule: { interval: SplitInterval; anchorDate: string; endDate?: string; lastGeneratedThrough?: string },
@@ -234,18 +263,25 @@ export function generateOccurrenceDates(
   const end = rule.endDate ? parseISO(rule.endDate) : null;
   const hardStop = end && end < upTo ? end : upTo;
 
-  let cursor = parseISO(rule.anchorDate);
+  const anchor = parseISO(rule.anchorDate);
+  let n = 0;
   // Fast-forward past already-generated occurrences.
   if (rule.lastGeneratedThrough) {
     const last = parseISO(rule.lastGeneratedThrough);
-    while (cursor <= last) cursor = stepDate(cursor, rule.interval);
+    while (n < 100000) {
+      const occurrence = nthOccurrence(anchor, rule.interval, n);
+      if (occurrence > last && !samePeriod(occurrence, last, rule.interval)) break;
+      n++;
+    }
   }
 
   const dates: string[] = [];
   let guard = 0;
+  let cursor = nthOccurrence(anchor, rule.interval, n);
   while (cursor <= hardStop && guard < 10000) {
     dates.push(format(cursor, 'yyyy-MM-dd'));
-    cursor = stepDate(cursor, rule.interval);
+    n++;
+    cursor = nthOccurrence(anchor, rule.interval, n);
     guard++;
   }
   return dates;

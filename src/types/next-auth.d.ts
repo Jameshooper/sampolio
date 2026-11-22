@@ -17,6 +17,7 @@ declare module 'next-auth' {
     email: string;
     name: string;
     role: UserRole;
+    sessionVersion?: number;
   }
 }
 
@@ -26,5 +27,9 @@ declare module 'next-auth/jwt' {
     email: string;
     name: string;
     role: UserRole;
+    /** Session id: stable across token refreshes; revoked on sign-out. */
+    sid?: string;
+    /** User.sessionVersion at sign-in; a mismatch ends the session. */
+    sv?: number;
   }
 }

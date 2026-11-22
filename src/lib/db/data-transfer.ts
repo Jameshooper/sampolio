@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { getUserDir, ensureDir, readEncryptedFile, writeEncryptedFile } from './encryption';
+import { getUserDir, ensureDir, readEncryptedFile, writeEncryptedFile, assertSafeId, updateEncryptedFile, withFileLock } from './encryption';
+import { getReconciliationLockKey } from './reconciliation';
 import { mergeById } from '@/lib/data-transfer-utils';
 import type { DataExport } from '@/lib/schemas/data-transfer.schema';
 import type { BalanceSnapshot, ReconciliationAdjustment, ReconciliationSession } from '@/types';
@@ -21,7 +22,7 @@ async function writeRows(dir: string, rows: Row[], userId: string): Promise<numb
   if (rows.length === 0) return 0;
   await ensureDir(dir);
   await Promise.all(
-    rows.map((row) => writeEncryptedFile(path.join(dir, `${row.id}.enc`), { ...row, userId }))
+    rows.map((row) => writeEncryptedFile(path.join(dir, `${assertSafeId(row.id, 'record id')}.enc`), { ...row, userId }))
   );
   return rows.length;
 }
@@ -32,9 +33,9 @@ async function mergeAggregateFile<T extends { id: string }>(
   incoming: T[],
   mode: 'merge' | 'replace'
 ): Promise<void> {
+  // Caller holds the reconciliation lock.
   const existing = mode === 'merge' ? await readEncryptedFile<Record<string, T[]>>(filePath) : null;
-  const merged = mergeById(existing?.[key] ?? [], incoming);
-  await writeEncryptedFile(filePath, { [key]: merged });
+  await writeEncryptedFile(filePath, { [key]: mergeById(existing?.[key] ?? [], incoming) });
 }
 
 export interface ImportCounts {
@@ -57,7 +58,7 @@ export async function writeUserDataFromExport(
 
   if (mode === 'replace') {
     await Promise.all(
-      EXPORTED_DIRS.map((d) => fs.rm(path.join(userDir, d), { recursive: true, force: true }))
+      EXPORTED_DIRS.map((d) => fs.rm(path.join(/*turbopackIgnore: true*/ userDir, d), { recursive: true, force: true }))
     );
   }
 
@@ -77,7 +78,7 @@ export async function writeUserDataFromExport(
     const { recurringItems, plannedItems, salaryConfigs, taxedIncomes, ...accountRow } = account;
     await writeRows(path.join(userDir, 'accounts'), [accountRow as unknown as Row], userId);
     counts.accounts++;
-    const base = path.join(userDir, 'accounts', account.id);
+    const base = path.join(userDir, 'accounts', assertSafeId(account.id, 'account id'));
     counts.accountSubItems += await writeRows(path.join(base, 'recurring'), recurringItems as unknown as Row[], userId);
     counts.accountSubItems += await writeRows(path.join(base, 'planned'), plannedItems as unknown as Row[], userId);
     counts.accountSubItems += await writeRows(path.join(base, 'salary'), salaryConfigs as unknown as Row[], userId);
@@ -88,47 +89,51 @@ export async function writeUserDataFromExport(
     const { contributions, ...row } = investment;
     await writeRows(path.join(userDir, 'investments'), [row as unknown as Row], userId);
     counts.investments++;
-    await writeRows(path.join(userDir, 'investments', investment.id, 'contributions'), contributions as unknown as Row[], userId);
+    await writeRows(path.join(userDir, 'investments', assertSafeId(investment.id, 'investment id'), 'contributions'), contributions as unknown as Row[], userId);
   }
 
   for (const debt of e.debts) {
     const { referenceRates, extraPayments, ...row } = debt;
     await writeRows(path.join(userDir, 'debts'), [row as unknown as Row], userId);
     counts.debts++;
-    await writeRows(path.join(userDir, 'debts', debt.id, 'reference-rates'), referenceRates as unknown as Row[], userId);
-    await writeRows(path.join(userDir, 'debts', debt.id, 'extra-payments'), extraPayments as unknown as Row[], userId);
+    await writeRows(path.join(userDir, 'debts', assertSafeId(debt.id, 'debt id'), 'reference-rates'), referenceRates as unknown as Row[], userId);
+    await writeRows(path.join(userDir, 'debts', assertSafeId(debt.id, 'debt id'), 'extra-payments'), extraPayments as unknown as Row[], userId);
   }
 
   for (const receivable of e.receivables) {
     const { repayments, ...row } = receivable;
     await writeRows(path.join(userDir, 'receivables'), [row as unknown as Row], userId);
     counts.receivables++;
-    await writeRows(path.join(userDir, 'receivables', receivable.id, 'repayments'), repayments as unknown as Row[], userId);
+    await writeRows(path.join(userDir, 'receivables', assertSafeId(receivable.id, 'receivable id'), 'repayments'), repayments as unknown as Row[], userId);
   }
 
   counts.goals = await writeRows(path.join(userDir, 'goals'), e.goals as unknown as Row[], userId);
   counts.budgets = await writeRows(path.join(userDir, 'budgets'), e.budgets as unknown as Row[], userId);
 
-  // Reconciliation lives in three aggregate files, not one file per row.
+  // Reconciliation lives in three aggregate files, not one file per row. Hold
+  // the same lock as the reconciliation mutators while rewriting them.
   const reconDir = path.join(userDir, 'reconciliation');
   await ensureDir(reconDir);
   const stampUser = <T extends { id: string }>(rows: T[]) => rows.map((r) => ({ ...r, userId }));
-  await mergeAggregateFile<BalanceSnapshot>(
-    path.join(reconDir, 'balance-snapshots.enc'), 'snapshots',
-    stampUser(e.reconciliation.snapshots as unknown as BalanceSnapshot[]), mode
-  );
-  await mergeAggregateFile<ReconciliationAdjustment>(
-    path.join(reconDir, 'reconciliation-adjustments.enc'), 'adjustments',
-    e.reconciliation.adjustments as unknown as ReconciliationAdjustment[], mode
-  );
-  await mergeAggregateFile<ReconciliationSession>(
-    path.join(reconDir, 'reconciliation-sessions.enc'), 'sessions',
-    stampUser(e.reconciliation.sessions as unknown as ReconciliationSession[]), mode
-  );
+  await withFileLock(getReconciliationLockKey(userId), async () => {
+    await mergeAggregateFile<BalanceSnapshot>(
+      path.join(reconDir, 'balance-snapshots.enc'), 'snapshots',
+      stampUser(e.reconciliation.snapshots as unknown as BalanceSnapshot[]), mode
+    );
+    await mergeAggregateFile<ReconciliationAdjustment>(
+      path.join(reconDir, 'reconciliation-adjustments.enc'), 'adjustments',
+      e.reconciliation.adjustments as unknown as ReconciliationAdjustment[], mode
+    );
+    await mergeAggregateFile<ReconciliationSession>(
+      path.join(reconDir, 'reconciliation-sessions.enc'), 'sessions',
+      stampUser(e.reconciliation.sessions as unknown as ReconciliationSession[]), mode
+    );
+  });
   counts.snapshots = e.reconciliation.snapshots.length;
 
   if (e.preferences) {
-    await writeEncryptedFile(path.join(userDir, 'preferences.enc'), e.preferences);
+    const preferences = e.preferences;
+    await updateEncryptedFile(path.join(userDir, 'preferences.enc'), () => preferences);
   }
 
   return counts;
