@@ -85,21 +85,24 @@ A self-hosted personal finance planner that replaces budgeting spreadsheets with
 - **Dark/Light Theme**: System-wide toggle between custom forest-green light/dark themes with translucent liquid-glass chrome surfaces (generated from PrimeReact's Lara themes plus a hand-tuned override layer)
 - **Simple/Advanced Display Mode**: Choose during onboarding (or later in Settings) how much of the app surfaces — Simple mode slims every nav surface to the core pages and uses plain-language labels, with everything else still reachable from Home's feature grid
 - **Interactive Month Navigation**: Scrollable month strip for quick date navigation in cashflow view
+- **What If? Scenarios**: Add or remove income and expenses, change an amount (a pay rise, a cancelled subscription), or drop in a one-off cost, then compare the result against your real projection side by side; scenarios run on the same inputs as the real forecast and are never saved
+- **Demo Mode**: A device-local privacy switch that masks every money value on screen (`€✱✱✱,✱✱`) so the app can be shown or screenshotted without revealing balances; chart shapes stay real
+- **Installable PWA**: Add to a phone's home screen; a lightweight service worker serves an offline page for navigations and never caches API, auth or mutation requests
 - **Data Maintenance**: Prune accumulated reconciliation snapshots/sessions from Settings → Data & storage (preview then compact); projections stay byte-identical and mortgage data is never touched
 
 ### Administration
 - **User Management**: Admin panel for creating, updating, and deactivating users
 - **Role-Based Access**: Admin and user roles with first-user-becomes-admin logic
-- **Self-Signup Control**: Admins can enable/disable public registration
+- **Self-Signup Control**: Admins can enable/disable public registration; closed by default (the first account can always be created)
 - **Cache Management**: Force revalidation of all caches from settings
 
 ### Security & Privacy
-- **File-Based Encrypted Storage**: AES-256-GCM encryption with HKDF-SHA256 key derivation — your data stays on your server
+- **File-Based Encrypted Storage**: Financial data is encrypted with AES-256-GCM using HKDF-SHA256 key derivation, and stays on your server (avatar images are stored unencrypted)
 - **Password Security**: bcrypt hashing (12 rounds), strong password requirements (8+ chars, mixed case, numbers, special chars)
-- **Brute Force Protection**: Account lockout after 10 failed attempts within 15 minutes
+- **Brute Force Protection**: Account lockout after 10 failed attempts within 15 minutes (held in memory, so a restart clears it)
 - **Rate Limiting**: Edge middleware caps unauthenticated auth requests (20/min) and general requests (300/min) per IP
-- **Security Headers**: XSS protection, frame options, CSP, HSTS, restricted permissions policy
-- **Self-Hosted**: Deploy by cloning and building on your own server — no external database needed
+- **Security Headers**: Content-Security-Policy, `X-Frame-Options: DENY`, `X-Content-Type-Options`, a restricted permissions policy, and HSTS where TLS is terminated in front (the Docker image and Home Assistant add-on omit HSTS, as they serve plain HTTP)
+- **Self-Hosted**: Deploy by cloning and building on your own server, as a Docker container, or as a Home Assistant add-on — no external database needed
 
 ## Getting Started
 
@@ -465,21 +468,24 @@ Assistant add-on below — see that section for the option names.
 This repository is also directly installable as a Home Assistant Supervisor
 add-on: `config.yaml` and `repository.yaml` at the repo root describe it, and
 it builds from the same `Dockerfile` above. In Home Assistant: **Settings →
-Add-ons → Add-on Store → ⋮ → Repositories**, add this repo's URL, then
-install **Sampolio** from the store. It's Ingress-only (no direct port) —
-reachable only through an authenticated Home Assistant session. Full option
-reference, the Ingress/framing tradeoff, and an optional embedded-Tailscale
-path for Enable Banking's public callback requirement are in
+Add-ons → Add-on Store → ⋮ → Repositories**, add this repo's URL — with a
+`#<branch>` suffix if the add-on files are not on the default branch — then
+install **Sampolio** from the store. No host port is published by default:
+reach it through the add-on's embedded Tailscale Serve (tailnet-only HTTPS),
+or set a port in the add-on's Network section for LAN access. Home Assistant
+Ingress is not used — the app cannot render under it — so Home Assistant's own
+login does not sit in front. Full option reference, access choices, recovery
+switches and the optional public bank-callback path are in
 [`DOCS.md`](DOCS.md).
 
 ## Environment Variables
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `AUTH_SECRET` | NextAuth.js secret key | Yes* | Auto-generated |
-| `ENCRYPTION_KEY` | 64-character hex key for file encryption | Yes* | Auto-generated |
+| `AUTH_SECRET` | NextAuth.js secret key | Yes* | Auto-generated* |
+| `ENCRYPTION_KEY` | 64-character hex key for file encryption | Yes* | Auto-generated* |
 | `AUTH_TRUST_HOST` | Set to `true` behind reverse proxy | No | - |
-| `AUTH_URL` | Public URL for auth (behind reverse proxy) | No | - |
+| `AUTH_URL` | The address the app is opened at. Its scheme decides the session cookie: `https://` ⇒ `Secure`, explicit `http://` ⇒ not | Yes (Docker / add-on) | - |
 | `DATA_DIR` / `SAMPOLIO_DATA_DIR` | Custom data directory path | No | `~/.sampolio/data` |
 | `PORT` / `SAMPOLIO_PORT` | Server port | No | `3999` |
 | `HOSTNAME` / `SAMPOLIO_HOST` | Server hostname | No | `0.0.0.0` |
@@ -487,7 +493,7 @@ path for Enable Banking's public callback requirement are in
 | `ENABLE_BANKING_REDIRECT_URL` | Consent callback URL (`<public-url>/api/bank/callback`) | No | - |
 | `ENABLE_BANKING_PRIVATE_KEY_FILE` | Path to the RS256 private key PEM (0600, outside the repo) | No | - |
 
-*Auto-generated if not provided, but using a `.env` file with fixed values is recommended for production.
+*Auto-generated and saved by `scripts/run-sampolio.sh` if not provided; the `SAMPOLIO_*` aliases are also read only by that script and `install-launchd.sh`. The Docker image and Home Assistant add-on generate nothing: they refuse to start without `AUTH_SECRET`, `ENCRYPTION_KEY` and `AUTH_URL`. Using fixed values is recommended everywhere. The complete list of variables the code reads is in [`docs/operations.md`](docs/operations.md) §9.
 
 > **Bank sync** is fully optional. Leave the three `ENABLE_BANKING_*` variables unset and the feature hard-disables itself (no network calls, a "not configured" notice in Settings). When set, the consent callback URL must be publicly reachable.
 

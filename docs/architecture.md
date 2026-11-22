@@ -243,10 +243,13 @@ batch) fetch a page's whole dataset in one cached call with the union of tags.
   `/` and the auth pages straight to `/dev-login`.
 
 Session strategy is **JWT** (`maxAge` 30 days, `updateAge` 1h); the token carries
-`id`/`email`/`name`/`role` (`UserRole`), surfaced via `src/types/next-auth.d.ts`. Cookie name
-is `__Secure-authjs.session-token` in production, `authjs.session-token` otherwise. Sign-up is
-gated by app settings (`checkSignupEnabled` in `src/lib/actions/auth.ts` reads
-`cachedGetAppSettings`; toggled from the admin panel). In production an outer
+`id`/`email`/`name`/`role` (`UserRole`), surfaced via `src/types/next-auth.d.ts`. The session
+cookie's `Secure` attribute and name follow `AUTH_URL`'s scheme (`src/lib/auth-cookies.ts`):
+`__Secure-authjs.session-token` unless `AUTH_URL` is an explicit `http://`, then
+`authjs.session-token` — fail-safe, so an unset value keeps the secure form. Every rejected
+sign-in logs one `[auth]` reason (never the password). Sign-up is gated by app settings (`checkSignupEnabled` in `src/lib/actions/auth.ts` reads
+`cachedGetAppSettings`; toggled from the admin panel). It defaults to **closed**; the first
+account can always be created regardless and becomes the admin. In production an outer
 **Cloudflare Access** layer authenticates before requests ever reach the app — see
 [`operations.md`](operations.md).
 
@@ -261,8 +264,11 @@ gated by app settings (`checkSignupEnabled` in `src/lib/actions/auth.ts` reads
   unauthenticated requests → **300/min**. Requests bearing a session cookie are exempt
   (server actions burst hundreds of POSTs per page load). 429 with `Retry-After`.
 - **Auth redirect** for cookie-less `/` and every path in `PROTECTED_PREFIXES` (see §3).
-- **Stale-cookie recovery**: a session cookie on `/auth/signin|signup` means the server-side
-  `auth()` rejected the JWT — the middleware deletes the cookie to break the redirect loop.
+- **Session cookie on `/auth/signin|signup`**: the middleware verifies the JWT (`getToken`).
+  Valid ⇒ redirect into the app, cookie untouched. Invalid or unreadable ⇒ delete it, which
+  breaks the redirect loop a server-rejected token would otherwise cause. It used to delete on
+  sight, and because the sign-in page calls `router.refresh()` straight after authenticating,
+  every successful sign-in destroyed its own session; `src/proxy.test.ts` pins both halves.
 
 Security headers are set for every route in `next.config.ts` (`headers()`):
 `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
@@ -279,9 +285,14 @@ worker; `frame-ancestors 'none'`; plus `img-src`/`font-src`/`connect-src`/`base-
 
 `src/instrumentation.ts` `register()` (Node runtime only): installs
 `installTimestampedConsole()` (`src/lib/server-logger.ts` — ISO-timestamp prefix on every
-`console.*`), then `startBankScheduler()` (`src/lib/bank/scheduler.ts`, 30-min tick,
-per-account daily rate limits from `src/lib/bank/constants.ts`). No other daemons, queues, or
-cron exist. Bank-sync mechanics: [`bank-sync.md`](bank-sync.md).
+`console.*`), then applies a pending add-on password reset (`runAdminPasswordReset` in
+`src/lib/addon-maintenance.ts` — a no-op unless `SAMPOLIO_RESET_ADMIN_PASSWORD=true`, and never
+allowed to stop the server starting), then `startBankScheduler()` (`src/lib/bank/scheduler.ts`,
+30-min tick, per-account daily rate limits from `src/lib/bank/constants.ts`), then
+`startHaSummaryScheduler()` (`src/lib/ha-summary-scheduler.ts` — an `unref`'d interval that pushes
+numbers-only summaries to Home Assistant, off unless `HA_SUMMARY_MINUTES` and `HA_WEBHOOK_URL` are
+both set). Those two schedulers are the only background timers; there are no queues or cron.
+Bank-sync mechanics: [`bank-sync.md`](bank-sync.md).
 
 Split-activity Home Assistant webhook POSTs (`src/lib/split-notify.ts`) run
 **post-response** via `after()` from `next/server` — the codebase's only use of that
@@ -349,7 +360,7 @@ Entity IDs are `uuid` v4 strings.
 
 Vitest (`vitest.config` + `src/test/setup.ts` with jest-dom + jsdom stubs for
 localStorage/matchMedia; mock factories in `src/test/mocks.ts`; `src/test/render.tsx`
-wraps components in ThemeProvider). ~69 test files:
+wraps components in ThemeProvider). ~74 test files:
 
 - **Pure engines** (`src/lib/*.test.ts`): `projection`, `wealth-projection`,
   `mortgage-projection` (exact-match reference-spreadsheet reproduction), `mortgage-utils`,
@@ -388,11 +399,17 @@ wraps components in ThemeProvider). ~69 test files:
   refusal, PEM write, Tailscale invocation — the real script run against PATH
   stubs for `tailscale`/`tailscaled` and node's long-running children), and
   `addon-manifest` (`config.yaml` ↔ `package.json` ↔ `run.sh` consistency, plus
-  the Ingress-only and no-privileges posture)
+  the unpublished-port and no-privileges posture)
+- **Auth & add-on recovery** (`src/lib/*.test.ts`, `src/proxy.test.ts`): `auth-cookies`
+  (cookie `Secure`/name from `AUTH_URL`, fail-safe), `proxy` (a valid session survives the
+  auth pages, an invalid one is cleared), `addon-maintenance` (password reset runs once),
+  `ha-summary` / `ha-summary-scheduler` (allowlisted keys only, no IBAN or line-item text;
+  off unless configured)
 
 **No coverage exists for**: most pages, server actions (auth/validation/cache-tag
 behavior — except a representative goals/trips/user-preferences slice), the bank client/connect/sync
-modules, `proxy.ts`, and there are no e2e/browser tests. Manual
+modules, most of `proxy.ts` (only its auth-page session handling is tested), and there are
+no e2e/browser tests. Manual
 verification uses the `sampolio-preview` launch config + `preview_*` tools.
 
 ## 16. Tooling

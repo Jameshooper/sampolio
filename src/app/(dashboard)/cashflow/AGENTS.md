@@ -75,7 +75,7 @@ Full monthly data table with columns: Month, Income, Expenses, Net Change, Balan
 - "This occurrence only" — creates an occurrence override (PlannedItem with `isRecurringOverride: true`)
 - "Entire series" — edits the RecurringItem itself
 
-**Occurrence Override Dialog** (`src/components/ui/occurrence-override-dialog.tsx`):
+**Occurrence Override Dialog** (`src/components/modals/occurrence-override-dialog.tsx`):
 - Allows changing the amount for a single month
 - Option to skip the occurrence entirely (`skipOccurrence: true`)
 

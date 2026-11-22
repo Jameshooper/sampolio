@@ -1,7 +1,7 @@
 name: Sampolio
 version: "3.24.1"
 slug: sampolio
-description: Self-hosted personal finance planner — cash flow, wealth, shared mortgage, split expenses, budgets, goals, trips, and optional read-only bank sync.
+description: A self-hosted personal finance planner — cash flow projections, budgets, goals and trips, shared mortgage and split expenses, with optional read-only bank sync.
 url: https://github.com/jameshooper/sampolio
 arch:
   - amd64

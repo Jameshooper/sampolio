@@ -120,8 +120,9 @@ the nested action/component/DB guides. Do not duplicate their mechanics here.
 
 Known limitations include file-write races, no cross-currency conversion,
 Finnish locale, bounded bank retrospective depth, bank-specific transaction
-gaps, in-memory cookie-based rate limiting, plaintext avatar files excluded
-from JSON backups, and local-only real-data parity. Keep the root limitations
+gaps, in-memory cookie-based rate limiting, a non-`Secure` session cookie when
+`AUTH_URL` is plain `http://`, plaintext avatar files excluded from JSON
+backups, and local-only real-data parity. Keep the root limitations
 and [`docs/known-gaps.md`](docs/known-gaps.md) honest.
 
 Commands: `pnpm dev` (preview port 4999), `pnpm build`, `pnpm lint`,

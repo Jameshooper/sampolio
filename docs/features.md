@@ -418,6 +418,13 @@ transport are unit-tested in `src/lib/split-notify.test.ts`.
 
 ## 2. Budgets (trip/project budgets with grant funding)
 
+**Account summaries on the same webhook.** When `HA_SUMMARY_MINUTES` is set, a second payload
+type, `event: "summary.updated"`, is pushed on that interval: account end-of-month balances,
+card outstanding totals and what is left for the month — numbers only, built from an explicit
+key allowlist so no line-item name, category, merchant or IBAN can be included. Automations on
+this webhook should branch on `event`, because the Split payloads above do carry names and
+expense titles. Mechanics: `src/lib/ha-summary.ts`; add-on setup: [`DOCS.md`](../DOCS.md).
+
 ### Storage & access
 
 A `Budget` is user-scoped and stored as **one encrypted document** at

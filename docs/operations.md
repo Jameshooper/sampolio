@@ -208,7 +208,7 @@ Every variable the code reads (`grep -r "process.env" src scripts next.config.ts
 |---|---|---|---|
 | `ENCRYPTION_KEY` | yes | `db/encryption.ts`, `reencrypt-data.mjs`, `rotate-encryption-key.mjs` | AES-256-GCM master key for all `.enc` files. Prod value in `~/.sampolio/data/.encryption_key` (injected into the env by the plist/launch config — the app itself reads only the env). |
 | `AUTH_SECRET` | yes | NextAuth (via env convention) | NextAuth session secret. |
-| `AUTH_URL` | yes | NextAuth (env convention), `api/bank/callback/route.ts` | Canonical app URL (prod domain; `http://localhost:4999` for the dev preview). The bank-callback route reads it explicitly to build the external redirect base. |
+| `AUTH_URL` | yes | NextAuth (env convention), `api/bank/callback/route.ts`, `lib/auth-cookies.ts` | Canonical app URL (prod domain; `http://localhost:4999` for the dev preview). The bank-callback route reads it explicitly to build the external redirect base. Its **scheme** also decides the session cookie: anything but an explicit `http://` gets `Secure` and the `__Secure-` name; `http://` gets neither. Fails safe — unset or malformed keeps the secure cookie. |
 | `DATA_DIR` | no (default `./data`) | `db/encryption.ts`, scripts | Root of the encrypted data tree. Prod: `~/.sampolio/data`. |
 | `OLD_ENCRYPTION_KEY` | rotation only | `rotate-encryption-key.mjs` | The previous master key when rotating to a new `ENCRYPTION_KEY` (§8). Never read by the app. |
 | `NEXT_DIST_DIR` | no (default `.next`) | `next.config.ts` | Build output dir; prod sets `.next-prod` to isolate from dev. |
@@ -218,7 +218,11 @@ Every variable the code reads (`grep -r "process.env" src scripts next.config.ts
 | `ENABLE_BANKING_PRIVATE_KEY_FILE` | bank sync only | `lib/bank/jwt.ts` | Path to the 0600 RS256 PKCS#8 PEM (outside the repo). |
 | `ENABLE_BANKING_BASE_URL` | no | `lib/bank/constants.ts` | API base override (sandbox); unset in prod. |
 | `BANK_SYNC_VERBOSE` | no | `lib/bank/` | `1/true/yes` → verbose sync logging. |
-| `HA_WEBHOOK_URL` | no | `lib/split-notify.ts` | Full Home Assistant webhook URL **including the secret webhook id** (e.g. `https://<ha-host>/api/webhook/<id>`) that split-activity notifications are POSTed to. Missing/blank ⇒ the feature hard-disables (zero network calls); `AUTH_URL` doubles as the deep-link base and must also be set. Never logged. |
+| `HA_SUMMARY_MINUTES` | no (default off) | `lib/ha-summary-scheduler.ts` | Interval for pushing numbers-only account summaries to `HA_WEBHOOK_URL`. Unset/`0` ⇒ off, no calls; clamped to 5–1440. Payload rules in `lib/ha-summary.ts`. |
+| `HA_WEBHOOK_URL` | no | `lib/split-notify.ts`, `lib/ha-summary.ts` | Full Home Assistant webhook URL **including the secret webhook id** (e.g. `https://<ha-host>/api/webhook/<id>`) that split-activity notifications are POSTed to. Missing/blank ⇒ the feature hard-disables (zero network calls); `AUTH_URL` doubles as the deep-link base and must also be set. Never logged. |
+| `DISABLE_TLS_HEADERS` | Docker only | `next.config.ts` | `true` drops `Strict-Transport-Security` and the CSP's `upgrade-insecure-requests`. Set by the `Dockerfile`, where nothing terminates TLS in front; never set on the launchd path (§12). |
+| `ALLOW_IFRAME_EMBED` | no | `next.config.ts` | `true` relaxes `frame-ancestors` to `'self'` and drops `X-Frame-Options`. Existed for Home Assistant Ingress; nothing sets it today. |
+| `SAMPOLIO_RESET_ADMIN_PASSWORD` | add-on only | `lib/addon-maintenance.ts` | Set by `run.sh` from the add-on's `reset_admin_password` switch; `true` makes the next boot reset the oldest admin's password once and print it to the log (§12). |
 | `NODE_ENV` / `NEXT_RUNTIME` | set by Next | various | Standard runtime flags (e.g. service-worker registration is production-only; the bank scheduler starts only on the Node runtime). |
 
 ## 10. Dev workflow against a copy of production data
@@ -242,118 +246,92 @@ launchd plist also live outside the repo.
 ## 12. Home Assistant add-on (alternative deployment)
 
 The maintainer's own instance still runs exactly as described in §1–§11
-(launchd + Caddy + Cloudflare Tunnel, no Docker). Independently of that, the
-repo root also carries `Dockerfile`, `run.sh`, `config.yaml`, and
-`repository.yaml` so the same app can be installed as a Home Assistant
-Supervisor add-on (Settings → Add-ons → Add-on Store → ⋮ → Repositories →
-add this repo's URL). Full install steps and the option reference are in
-[`DOCS.md`](../DOCS.md); the short version:
+(launchd + Caddy + Cloudflare Tunnel, no Docker). Independently, the repo root
+carries `Dockerfile`, `run.sh`, `config.yaml`, `repository.yaml` and
+`ha-ingress-proxy.mjs`, so the same app installs as a Home Assistant
+Supervisor add-on. The option reference and install steps are in
+[`DOCS.md`](../DOCS.md); this section covers how the runtime works.
 
-- `run.sh` is the container entrypoint. When `/data/options.json` exists
-  (Supervisor's convention for add-on options) it reads `auth_secret`,
-  `encryption_key`, `auth_url`, the three `enable_banking_*` options, and
-  `ha_webhook_url` from it and maps them onto the same env vars listed in §9;
-  otherwise it reads those as plain env vars, so the same image also runs as
-  a bare `docker run` (see the README's Docker Deployment section). Missing
-  `auth_secret` / `encryption_key` / `auth_url` is a hard failure at
-  container startup, matching the no-Docker path's behavior in §8.
-- The add-on's persistent `/data` volume holds the app's encrypted data tree
-  at `/data/sampolio` (`DATA_DIR`), plus the Enable Banking PEM (written from
-  the `enable_banking_private_key` option) when bank sync is configured.
-- The add-on is **Ingress-only** (`ingress: true`, no `ports`/`webui`) — only
-  reachable through an authenticated Home Assistant session, which is the
-  point: it's a real login/2FA gate the add-on otherwise has none of. That
-  requires letting Supervisor frame it, so the Dockerfile sets
-  `ALLOW_IFRAME_EMBED=true` (`next.config.ts`). Ingress serves the add-on
-  from the HA frontend's own origin, so that **relaxes** `frame-ancestors`
-  from `'none'` to `'self'` and drops only `X-Frame-Options`, which cannot
-  express "same origin only" — third-party framing stays blocked.
-  Reintroducing a direct port or a standalone Tailscale add-on's
-  `svc:sampolio` Service alongside Ingress reopens a bypass around HA's
-  login and defeats the point of using Ingress at all.
-- **The add-on publishes port 3999; it does not use Ingress.** Ingress would
-  put Home Assistant's own login and 2FA in front, but the app does not render
-  under it (see [`known-gaps.md`](known-gaps.md) #4) — so on this port
-  Sampolio's own NextAuth login is the only authentication. Keep the port off
-  the public internet. `ALLOW_IFRAME_EMBED` is correspondingly **not** set in
-  the `Dockerfile`, so `X-Frame-Options: DENY` and `frame-ancestors 'none'`
-  apply; the cost is that Sampolio cannot be embedded in a Home Assistant
-  iframe panel. Verified in a browser on the published port: sign-up, sign-in,
-  client-side navigation across Cashflow/Goals/Split/Settings, and 390 px with
-  no horizontal overflow, all with zero failed requests.
-- The Ingress machinery below is retained but **currently unused**, because the
-  proxy also sanitises `X-Forwarded-For` (see `ha-ingress-proxy.mjs`) and its
-  rewriting is verified lossless. Ingress mounts the app at a path containing a token that **rotates every
-  add-on restart** (`/api/hassio_ingress/<token>/`), which a static Next.js
-  `basePath` can't track. Next.js/React also emit root-absolute asset and
-  link paths (`/_next/...`, `<Link href="/settings">`, NextAuth's redirect
-  `Location`) that a browser resolves against the domain root, not the
-  current URL — so without correction they silently drop the ingress prefix
-  and 404 against Home Assistant's own routing. `ha-ingress-proxy.mjs`
-  fixes this: it sits in front of Next.js (which `run.sh` moves to an
-  internal-only port, `NEXT_INTERNAL_PORT`) and rewrites those root-absolute
-  references — HTML attributes, the same escaped inside React Server
-  Components' streamed `<script>` payload, the `text/x-component` flight
-  payload served on every client-side navigation, plain JSON in
-  `manifest.webmanifest`, and redirect `Location` headers — using the
-  current request's `X-Ingress-Path` header, which Supervisor sends fresh on
-  every request. Requests with no `X-Ingress-Path` (direct access, or the
-  Tailscale Funnel bank-callback path) pass through completely unmodified.
-- `Location` rewriting covers three shapes: a root-absolute path, an
-  absolute URL **on the same host** (NextAuth builds these), and an external
-  URL, which is never touched — the bank's PSD2 consent redirect depends on
-  that. It also prefixes the `callbackUrl` query parameter that `proxy.ts`
-  attaches when sending an unauthenticated visitor to `/auth/signin`: the
-  sign-in page hands that value to `router.push()`, a client-side navigation
-  resolved against the origin root, so an un-prefixed value drops the user
-  out of the add-on the moment they sign in successfully. A path that
-  already carries the prefix is left alone.
-- `src/test/ha-ingress-proxy.test.ts`, `src/test/run-sh.test.ts`, and
-  `src/test/addon-manifest.test.ts` cover this runtime; the proxy exports its
-  rewriting helpers and `createProxyServer()` for that reason and only binds
-  a port when executed directly. `run.sh` reads `OPTIONS_FILE`,
-  `TAILSCALE_STATE_DIR`, and `TAILSCALE_SOCKET` from the environment purely
-  so those tests can redirect them; the defaults are the container paths.
-- This is unrelated to `HA_WEBHOOK_URL` (§9), which is Sampolio *sending*
-  Split activity notifications to Home Assistant, not Home Assistant running
-  Sampolio.
-- Two optional add-on options, `tailscale_auth_key` and `tailscale_funnel`,
-  run an embedded `tailscaled` inside the add-on's own container (state in
-  `/data/tailscale`, joins as device `sampolio-callback` — deliberately
-  distinct from the standalone add-on's `svc:sampolio` Service) and
-  optionally expose **only `/api/bank/callback`** to the public internet via
-  `tailscale funnel --set-path=/api/bank/callback`. Serve and Funnel cannot
-  share a port — the last command to configure one wins — so enabling Funnel
-  makes the whole port public and the exposure is bounded by that being the
-  only path with a backend. The **whole app** is also mounted tailnet-only on
-  `:8443` of the same hostname, which the bank flow needs (the callback
-  requires a session cookie, and cookies are host-scoped); `AllowFunnel` is
-  keyed per host *and port*, so `:8443` is not promoted to public. Everyone
-  on the tailnet can reach the app's login while the option is on — see
-  `DOCS.md` "Embedded Tailscale".
-  Turning `tailscale_funnel` off does not merely skip the enable: `run.sh`
-  runs `funnel 443 off` + `serve reset` on the next start, because both
-  persist in tailscaled's state file and that state deliberately survives
-  restarts — without the teardown the callback would stay published with no
-  sign of it. Verify with `tailscale funnel status` after restarting.
-  The Funnel path targets `127.0.0.1:$PORT` inside the container and never
-  passes through Ingress, so it is unaffected by whether `config.yaml` uses
-  `ingress:` or a published `ports:` entry.
-  This exists for cases with no reverse proxy/tunnel at all, where a PSD2
-  consent redirect (Enable Banking) needs a genuinely public callback URL; a
-  tailnet-only Tailscale Services/Serve setup (a separate, standalone
-  Tailscale add-on) isn't enough for that specific case. Off by default.
-  `tailscaled` runs with `--tun=userspace-networking`, which is what keeps
-  "expose only the callback" true: in normal TUN mode the container would
-  get a tailnet IP and every port in it — including Next.js — would be
-  reachable by any tailnet device with no HA login in front, from the auth
-  key alone, funnel or not. Userspace mode also removes any need for
-  `NET_ADMIN`/`NET_RAW` or `/dev/net/tun`, so `config.yaml` requests no
-  capabilities and no devices.
-- The Dockerfile sets `DISABLE_TLS_HEADERS=true`, which makes `next.config.ts`
-  drop `Strict-Transport-Security` and the CSP's `upgrade-insecure-requests`.
-  Both assume a TLS-terminating proxy in front (true for §1–§11's launchd +
-  Caddy, never true for this plain-http container) — left on, the browser
-  rewrites every asset request to a nonexistent https listener and the page
-  never renders (blank white screen, no server-side error). Only the Docker
-  build sets this; the non-Docker deploy path is unaffected.
+**Entrypoint.** `run.sh` reads `/data/options.json` (Supervisor's convention)
+when present and maps each option onto the env vars in §9; otherwise it reads
+plain env vars, so the image also runs as a bare `docker run`. `auth_secret`
+and `encryption_key` can each come from a file (`auth_secret_file`,
+`encryption_key_file`) instead of an option value; a missing secret from both
+sources, or a missing `auth_url`, is a hard failure at startup — the same rule
+as §8. `OPTIONS_FILE`, `TAILSCALE_STATE_DIR` and `TAILSCALE_SOCKET` are
+overridable only so the tests can redirect them.
+
+**Storage.** The add-on's `/data` volume holds the encrypted data tree at
+`/data/sampolio` (`DATA_DIR`). The Enable Banking key is **not** stored there:
+`enable_banking_private_key_file` names a PEM under `/ssl`, mapped read-only,
+and `run.sh` never copies it. A PEM left in the data directory by an earlier
+version is deleted on start. `data` is the only writable mapping.
+
+**Access.** `ports` offers `3999/tcp` as `null`, so nothing is published until
+a host port is set in the Network section. Home Assistant Ingress would put
+HA's own login and 2FA in front, but the app cannot render under it
+([`known-gaps.md`](known-gaps.md) #4). The intended way in is the embedded
+Tailscale Serve below. On a published port, Sampolio's own login is the only
+authentication, so keep that port off the internet. `ALLOW_IFRAME_EMBED` is
+not set, so `X-Frame-Options: DENY` and `frame-ancestors 'none'` apply and the
+app cannot be embedded in an HA iframe panel.
+
+**Sign-in over plain HTTP.** The session cookie's `Secure` flag follows the
+scheme of `AUTH_URL` (`src/lib/auth-cookies.ts`, §9), so a LAN deployment with
+`auth_url: http://<ha-host>:3999` can sign in — at the cost of the cookie
+travelling in clear text. Over Tailscale Serve it is real HTTPS and the cookie
+stays `Secure`. See [`known-gaps.md`](known-gaps.md) #5.
+
+**Embedded Tailscale.** Setting `tailscale_auth_key` runs `tailscaled` inside
+the container as device `sampolio-callback` (distinct from a standalone
+Tailscale add-on's `svc:sampolio` Service), with state in `/data/tailscale`.
+It runs with `--tun=userspace-networking`: in TUN mode every port in the
+container would be reachable from the whole tailnet from the auth key alone,
+whereas userspace mode exposes only what `serve`/`funnel` publish — and needs
+no `NET_ADMIN`/`NET_RAW` or `/dev/net/tun`, so `config.yaml` requests no
+capabilities and no devices. On every start `run.sh` resets Serve and Funnel
+before reapplying them, because both persist in tailscaled's state file;
+turning an option off therefore really removes it.
+
+- `tailscale_serve` (default on with a key) serves the whole app tailnet-only
+  on `:8443` over HTTPS.
+- `tailscale_funnel` (default off) publishes **only** `/api/bank/callback` on
+  `:443` to the public internet, for the PSD2 consent redirect. Serve and
+  Funnel cannot share a port — the last command to configure one wins — so
+  Funnel makes the whole port public and the exposure is bounded by that being
+  the only path with a backend. `AllowFunnel` is keyed per host *and* port, so
+  `:8443` is not promoted. The callback needs a session cookie set on this same
+  hostname; cookies ignore the port (RFC 6265 §5.1.3), so browsing on `:8443`
+  supplies it. `run.sh` warns when Funnel is on without Serve.
+
+**Recovery switches.** `reset_admin_password` relays
+`SAMPOLIO_RESET_ADMIN_PASSWORD` to the app, whose instrumentation hook
+(`src/lib/addon-maintenance.ts`) resets the oldest admin's password and prints
+it once to the log — never stored as an option value. `wipe_data` deletes the
+data tree from `run.sh` before the server starts. Each acts once: a marker
+blocks a repeat until the switch is turned off, and the wipe's marker sits
+beside the data directory because the wipe removes the tree itself. The login
+lockout is in-memory, so a restart clears it with no switch at all.
+
+**Summary feed.** `ha_summary_minutes` sets `HA_SUMMARY_MINUTES` (§9) for the
+numbers-only push to `ha_webhook_url`; payload and privacy rules in
+[`DOCS.md`](../DOCS.md) and `src/lib/ha-summary.ts`. Unrelated to running the
+add-on itself, as is the Split notifier on the same webhook.
+
+**Headers.** The `Dockerfile` sets `DISABLE_TLS_HEADERS=true` (§9). HSTS and
+`upgrade-insecure-requests` assume a TLS-terminating proxy in front, which is
+true for §1–§11 and never true for this plain-HTTP container; left on, the
+browser rewrites every asset request to a nonexistent HTTPS listener and the
+page renders blank with no server-side error.
+
+**The proxy.** `run.sh` starts Next.js on `127.0.0.1:${NEXT_INTERNAL_PORT}` and
+puts `ha-ingress-proxy.mjs` on the published port. It sanitises forwarding
+headers unconditionally — `X-Forwarded-For` is rebuilt from the socket peer,
+`X-Forwarded-Host`/`-Proto` are dropped and `X-Ingress-Path` is never forwarded
+— because `src/proxy.ts` keys rate limiting on `X-Forwarded-For` and the bank
+client reports it as the PSD2 PSU-IP. Its Ingress path-rewriting (HTML
+attributes, the escaped RSC payload, the `text/x-component` flight payload,
+manifest JSON, CSS `url()`, `HL[...]` preload hints, and the `Location` and
+`Link` headers) is retained and tested but unused while Ingress cannot render
+the app. Tests: `src/test/ha-ingress-proxy.test.ts`, `src/test/run-sh.test.ts`,
+`src/test/addon-manifest.test.ts`.
