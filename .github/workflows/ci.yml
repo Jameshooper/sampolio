@@ -61,8 +61,9 @@ jobs:
           # Secrets and VCS metadata never reach the image.
           docker exec sampolio sh -c 'test ! -e /app/.env && test ! -e /app/.git'
           # Strict path binding is on by default.
-          docker exec sampolio sh -c 'tr "\\0" "\\n" < /proc/$(pgrep -f "next start" | head -1)/environ | grep -qx ENCRYPTION_REQUIRE_PATH_BINDING=true'
-          # Sign-up writes v2 (path-bound), owner-only files.
+          # (run.sh exports it, then execs the ingress proxy as pid 1; next start inherits it.)
+          docker exec sampolio sh -c 'tr "\\0" "\\n" < /proc/1/environ | grep -qx ENCRYPTION_REQUIRE_PATH_BINDING=true'
+          # Whatever the container has written so far must be v2 (path-bound) and owner-only.
           curl -s -o /dev/null http://localhost:3999/auth/signup
           sudo sh -c 'for f in $(find "$0/sampolio" -name "*.enc"); do head -c4 "$f" | grep -q "^sv2:" || { echo "not v2: $f"; exit 1; }; done; test -z "$(find "$0/sampolio" -name "*.enc" ! -perm 600)"' "$RUNNER_TEMP/data"
       - name: Container logs
