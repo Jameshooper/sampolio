@@ -33,3 +33,32 @@ jobs:
       - run: pnpm test
       - run: pnpm audit --prod
       - run: pnpm build
+
+  docker:
+    # Builds the committed Dockerfile and checks the container serves the app
+    # as the unprivileged user with a mounted data volume.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: docker build -t sampolio:ci .
+      - name: Smoke test
+        run: |
+          mkdir -p "$RUNNER_TEMP/data" && sudo chown 1000:1000 "$RUNNER_TEMP/data"
+          docker run -d --name sampolio -p 3999:3999 -v "$RUNNER_TEMP/data:/app/data" \
+            -e AUTH_SECRET="$(openssl rand -base64 32)" -e ENCRYPTION_KEY="$(openssl rand -hex 32)" \
+            -e AUTH_TRUST_HOST=true -e TRUSTED_PROXY_HOPS=0 sampolio:ci
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3999/auth/signin || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          test "$code" = "200"
+          test "$(docker exec sampolio id -u)" = "1000"
+          docker exec sampolio sh -c 'test ! -e /app/.env && test ! -e /app/.git'
+      - name: Container logs
+        if: failure()
+        run: docker logs sampolio || true

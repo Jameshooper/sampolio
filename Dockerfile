@@ -1,10 +1,10 @@
 # Sampolio container image. Build: docker build -t sampolio .
 # Run (data on a host volume; secrets from an env file that is never baked in):
 #   docker run -p 3999:3999 -v "$PWD/sampolio-data:/app/data" --env-file .env sampolio
-# For reproducible builds, pin the base image by digest
-# (node:26-alpine@sha256:<digest>) in both stages.
+# The base image is pinned by digest in both stages for reproducible builds;
+# Dependabot (docker ecosystem) proposes digest updates.
 
-FROM node:26-alpine AS builder
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS builder
 WORKDIR /app
 # Same pnpm as package.json "packageManager" (Node 25+ no longer bundles corepack).
 RUN npm install -g pnpm@12.3.4
@@ -12,7 +12,7 @@ RUN npm install -g pnpm@12.3.4
 COPY . .
 RUN pnpm install --frozen-lockfile && pnpm build
 
-FROM node:26-alpine AS runner
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     DATA_DIR=/app/data

@@ -18,7 +18,10 @@ cd "$REPO_ROOT"
 
 # Configuration
 PORT="${SAMPOLIO_PORT:-3999}"
-HOST="${SAMPOLIO_HOST:-0.0.0.0}"
+# Loopback by default: Caddy and cloudflared reach the app on localhost:3999,
+# and nothing else should be able to bypass them (the rate limiter trusts the
+# X-Forwarded-For entry they set). Set SAMPOLIO_HOST=0.0.0.0 to expose it on the LAN.
+HOST="${SAMPOLIO_HOST:-127.0.0.1}"
 DATA_DIR="${SAMPOLIO_DATA_DIR:-$HOME/.sampolio/data}"
 # Serve the prod-isolated build dir (matches the launchd plist + server-deploy.sh)
 export NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-prod}"

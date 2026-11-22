@@ -8,9 +8,21 @@ const SALT_LENGTH = 64;
 const TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
 const ITERATIONS = 100000;
-// HKDF context label — binds derived keys to this app/purpose. Never change it
-// for a given format version, or existing files stop decrypting on the fast path.
+// HKDF context labels — bind derived keys to this app/purpose and format
+// version. Never change one, or files in that format stop decrypting.
 const HKDF_INFO = Buffer.from('sampolio-file-encryption-v1');
+const HKDF_INFO_V2 = Buffer.from('sampolio-file-encryption-v2');
+
+// File formats (every one is salt(64) | iv(16) | tag(16) | ciphertext):
+//   v2  "sv2:" + base64 — HKDF(v2 label) key, and the file's path relative to
+//       DATA_DIR authenticated as GCM associated data, so a file decrypts only
+//       at the path it was written for (swapping .enc files between users or
+//       entities fails). Every write uses v2.
+//   v1  base64 — HKDF(v1 label) or legacy PBKDF2 key, no associated data. Read
+//       for compatibility unless ENCRYPTION_REQUIRE_PATH_BINDING=true.
+// scripts/lib-file-crypto.mjs implements the same formats for the maintenance
+// scripts; src/lib/db/file-format-v2.test.ts keeps the two in step.
+export const FORMAT_V2_PREFIX = 'sv2:';
 
 // Get the encryption key from the environment. In production a missing key is
 // a hard failure: falling back to the publicly known default would silently
@@ -73,18 +85,20 @@ function deriveKeyPbkdf2(password: string, salt: Buffer): Buffer {
   return key;
 }
 
-function decryptWithKey(key: Buffer, iv: Buffer, tag: Buffer, encrypted: Buffer): string {
+function decryptWithKey(key: Buffer, iv: Buffer, tag: Buffer, encrypted: Buffer, aad?: Buffer): string {
   // Pin the tag length: without it Node accepts truncated (4–15 byte) tags,
   // weakening GCM's integrity guarantee for a short or damaged file.
   if (tag.length !== TAG_LENGTH) {
     throw new Error('Invalid ciphertext');
   }
   const decipher = crypto.createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
+  if (aad) decipher.setAAD(aad);
   decipher.setAuthTag(tag);
   const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
   return decrypted.toString('utf8');
 }
 
+/** Legacy v1 (no path binding). Kept for compatibility tests; writes use encryptForPath. */
 export function encrypt(data: string): string {
   const password = getEncryptionKey();
   const salt = crypto.randomBytes(SALT_LENGTH);
@@ -100,6 +114,7 @@ export function encrypt(data: string): string {
   return combined.toString('base64');
 }
 
+/** Decrypt a v1 file (HKDF, then legacy PBKDF2). */
 export function decrypt(encryptedData: string): string {
   const password = getEncryptionKey();
   const combined = Buffer.from(encryptedData, 'base64');
@@ -128,6 +143,56 @@ export function decrypt(encryptedData: string): string {
 export function getDataDir(): string {
   const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
   return dataDir;
+}
+
+/** A file's identity for v2: its path relative to DATA_DIR, '/'-separated so a
+ * data copy moves between macOS/Linux/Windows hosts unchanged. */
+export function dataRelativePath(filePath: string): string {
+  return path
+    .relative(path.resolve(/*turbopackIgnore: true*/ getDataDir()), path.resolve(/*turbopackIgnore: true*/ filePath))
+    .split(path.sep)
+    .join('/');
+}
+
+function aadFor(relativePath: string): Buffer {
+  return Buffer.from(`sampolio:v2:${relativePath}`, 'utf8');
+}
+
+function requirePathBinding(): boolean {
+  return process.env.ENCRYPTION_REQUIRE_PATH_BINDING === 'true';
+}
+
+/** Encrypt `data` in format v2 for the file at `filePath`. */
+export function encryptForPath(data: string, filePath: string): string {
+  const password = getEncryptionKey();
+  const salt = crypto.randomBytes(SALT_LENGTH);
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const key = Buffer.from(crypto.hkdfSync('sha256', Buffer.from(password, 'utf8'), salt, HKDF_INFO_V2, KEY_LENGTH));
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
+  cipher.setAAD(aadFor(dataRelativePath(filePath)));
+  const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
+  return FORMAT_V2_PREFIX + Buffer.concat([salt, iv, cipher.getAuthTag(), encrypted]).toString('base64');
+}
+
+/** Decrypt the contents of the file at `filePath` (v2 bound to that path, or v1). */
+export function decryptForPath(content: string, filePath: string): string {
+  if (content.startsWith(FORMAT_V2_PREFIX)) {
+    const combined = Buffer.from(content.slice(FORMAT_V2_PREFIX.length), 'base64');
+    if (combined.length < SALT_LENGTH + IV_LENGTH + TAG_LENGTH) throw new Error('Invalid ciphertext');
+    const salt = combined.subarray(0, SALT_LENGTH);
+    const iv = combined.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
+    const tag = combined.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
+    const encrypted = combined.subarray(SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
+    const key = Buffer.from(
+      crypto.hkdfSync('sha256', Buffer.from(getEncryptionKey(), 'utf8'), salt, HKDF_INFO_V2, KEY_LENGTH)
+    );
+    // A wrong key OR a file moved from another path fails authentication here.
+    return decryptWithKey(key, iv, tag, encrypted, aadFor(dataRelativePath(filePath)));
+  }
+  if (requirePathBinding()) {
+    throw new Error(`Refusing unbound (v1) encrypted file ${dataRelativePath(filePath)} — ENCRYPTION_REQUIRE_PATH_BINDING is on`);
+  }
+  return decrypt(content);
 }
 
 // ==================== Path safety ====================
@@ -247,7 +312,7 @@ export async function readEncryptedFile<T>(filePath: string): Promise<T | null> 
   assertInsideDataDir(filePath);
   try {
     const encryptedContent = await fs.readFile(filePath, 'utf8');
-    const decrypted = decrypt(encryptedContent);
+    const decrypted = decryptForPath(encryptedContent, filePath);
     return JSON.parse(decrypted) as T;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -268,7 +333,8 @@ export async function writeEncryptedFile<T>(filePath: string, data: T): Promise<
   await ensureDir(dirPath);
 
   const jsonData = JSON.stringify(data, null, 2);
-  const encrypted = encrypt(jsonData);
+  // Bound to the final path (not the temp file writeFileAtomic renames from).
+  const encrypted = encryptForPath(jsonData, filePath);
   await writeFileAtomic(filePath, encrypted);
 }
 

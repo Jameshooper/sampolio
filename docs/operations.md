@@ -40,8 +40,11 @@ through a Cloudflare Tunnel gated by Cloudflare Access (Zero Trust).
 - **Service:** launchd agent `com.sampolio.app`
   (`~/Library/LaunchAgents/com.sampolio.app.plist`, `KeepAlive` → auto-restarts on
   crash, starts at login).
-- **Command:** `next start -p 3999` with **`NEXT_DIST_DIR=.next-prod`** so prod
-  serves its own build dir, isolated from the dev preview's `.next`.
+- **Command:** `next start -p 3999 -H 127.0.0.1` with **`NEXT_DIST_DIR=.next-prod`** so prod
+  serves its own build dir, isolated from the dev preview's `.next`. The loopback bind
+  (`SAMPOLIO_HOST`, default `127.0.0.1`) means only Caddy and cloudflared on the same host
+  reach the app, so nobody can bypass them and forge the `X-Forwarded-For` the rate
+  limiter trusts. Re-run `install-launchd.sh` after upgrading to apply it to the plist.
 - **Working copy:** there is **one** git clone at `~/sampolio`. Deploying =
   rebuild `.next-prod` in place + restart the agent (no separate prod checkout).
 - **Data:** `~/.sampolio/data` (per-user encrypted `.enc` files; see the DB layer
@@ -181,8 +184,9 @@ reconnect banner before expiry (Overview) and a Reconnect button in
 | `install-launchd.sh` | Installs `com.sampolio.app` (`~/Library/LaunchAgents/`): resolves the Node binary from `.nvmrc` at install time and bakes it + the env from `~/sampolio/.env` into the plist, so boot doesn't depend on an interactive shell. Build with `server-deploy.sh` first. |
 | `uninstall-launchd.sh` | Removes the launchd agent. |
 | `run-sampolio.sh` | Starts the app in the foreground from the in-place build (dev/diagnostic use). |
-| `reencrypt-data.mjs` | One-shot re-encryption of every `.enc` file into the fast **HKDF** key-derivation format (see §8). `--dry-run` supported. |
-| `rotate-encryption-key.mjs` | Rotates the data set to a **new** `ENCRYPTION_KEY`: decrypts every `.enc` with `OLD_ENCRYPTION_KEY`, re-encrypts with the new key (see §8). `--dry-run` supported. |
+| `reencrypt-data.mjs` | Re-encrypts every `.enc` file into the current format **v2** (path-bound) with the same key (see §8). `--dry-run` supported. |
+| `rotate-encryption-key.mjs` | Rotates the data set to a **new** `ENCRYPTION_KEY`: decrypts every `.enc` (any format) with `OLD_ENCRYPTION_KEY`, re-encrypts with the new key as v2 (see §8). `--dry-run` supported. |
+| `lib-file-crypto.mjs` | The encrypted-file formats for the two scripts above (kept byte-compatible with `src/lib/db/encryption.ts` by `file-format-v2.test.ts`) and their key resolution (env → `~/.sampolio/secrets/encryption_key` → `<DATA_DIR>/.encryption_key`). |
 | `generate-icons.mjs` | Regenerates the committed PWA PNG icon set from the master SVGs in `public/icons/` (uses `sharp`). Run after editing the SVGs. |
 | `lib-node.sh` | Shared shell helpers (Node/nvm resolution) sourced by the other scripts. |
 | `lib-secrets.sh` | `sampolio_load_secrets <data_dir>`: resolves `AUTH_SECRET` / `ENCRYPTION_KEY` (env → secrets dir → legacy data-dir files), generates missing ones with `umask 077`, never generates a key over existing encrypted data (§6). Sourced by `run-sampolio.sh` and `install-launchd.sh`. |
@@ -190,21 +194,30 @@ reconnect banner before expiry (Overview) and a Reconnect button in
 ## 8. Encryption maintenance
 
 All data files are AES-256-GCM with a per-file key derived from `ENCRYPTION_KEY`
-via **HKDF-SHA256**; the read path falls back to the legacy PBKDF2 derivation for
-old files (see `src/lib/db/encryption.ts` and `src/lib/db/AGENTS.md`).
+via **HKDF-SHA256**. Every write uses **format v2**, which also binds the file to its
+path under `DATA_DIR`, so an encrypted file copied over another one no longer decrypts.
+Older **v1** files (HKDF, or the legacy PBKDF2 derivation) remain readable and upgrade on
+their next write. Details: `src/lib/db/encryption.ts`, `src/lib/db/AGENTS.md`.
 
-**Re-encrypting to the fast format** — `node scripts/reencrypt-data.mjs [--dry-run]`
-rewrites every `.enc` file under `DATA_DIR` (default `./data`; key from
-`ENCRYPTION_KEY` env, else `<DATA_DIR>/.encryption_key`) using HKDF. It is a
-*performance* migration, not a correctness one: idempotent, atomic per file
-(temp-write + rename), never deletes data. Take a backup first anyway. To run it
-against production data, stop the app, back up, run with
-`DATA_DIR=$HOME/.sampolio/data`, restart.
+**Upgrading a data set to v2** (once, after deploying a v2-capable build — 4.0.0+):
+
+1. Stop the app and take a backup of `~/.sampolio/data`.
+2. `DATA_DIR=$HOME/.sampolio/data node scripts/reencrypt-data.mjs --dry-run` — check
+   `failed: 0`, then run it without `--dry-run`. It is idempotent and atomic per file
+   (0600 temp file + fsync + rename) and never deletes data. Key resolution matches the
+   launch scripts (env → `~/.sampolio/secrets/encryption_key` → `<DATA_DIR>/.encryption_key`).
+3. Add `ENCRYPTION_REQUIRE_PATH_BINDING=true` to `~/sampolio/.env` and re-run
+   `install-launchd.sh`, so the app refuses any v1 file from now on (an old backup file or a
+   planted one can no longer be substituted).
+4. Start the app and sign in.
+
+**Rollback caveat:** builds before 4.0.0 cannot read v2 files. To roll back, restore the
+backup from step 1 (any data written since is lost) — don't point an old build at
+migrated data.
 
 **Key rotation** — `OLD_ENCRYPTION_KEY=<old> ENCRYPTION_KEY=<new>
 node scripts/rotate-encryption-key.mjs [--dry-run]` decrypts every `.enc` file
-with the old key (HKDF with PBKDF2 fallback) and re-encrypts it with the new key
-(HKDF). It refuses to run when the two keys are identical (that is
+with the old key (any format) and re-encrypts it with the new key as v2. It refuses to run when the two keys are identical (that is
 `reencrypt-data.mjs`'s job). Atomic per file, but a crash mid-run leaves the
 tree mixed between keys — **stop the app and take a backup first**; re-running
 with the same env resumes safely (already-rotated files are detected via the
@@ -223,6 +236,7 @@ Every variable the code reads (`grep -r "process.env" src scripts next.config.ts
 | Variable | Required | Read in | Meaning |
 |---|---|---|---|
 | `ENCRYPTION_KEY` | yes | `db/encryption.ts`, `reencrypt-data.mjs`, `rotate-encryption-key.mjs` | AES-256-GCM master key for all `.enc` files. Resolved by `scripts/lib-secrets.sh` from `.env`, `~/.sampolio/secrets/encryption_key`, or the legacy `~/.sampolio/data/.encryption_key`, and injected into the env by the plist/launch config — the app itself reads only the env. |
+| `ENCRYPTION_REQUIRE_PATH_BINDING` | no (default off) | `db/encryption.ts` | `true` → refuse v1 (unbound) encrypted files. Turn on after running `reencrypt-data.mjs` (§8). |
 | `AUTH_SECRET` | yes | NextAuth (via env convention) | NextAuth session secret. |
 | `AUTH_URL` | yes | NextAuth (env convention), `api/bank/callback/route.ts` | Canonical app URL (prod domain; `http://localhost:4999` for the dev preview). The bank-callback route builds its external redirect base from it (else from the origin of `ENABLE_BANKING_REDIRECT_URL`; never from request headers). |
 | `TRUSTED_PROXY_HOPS` | no (default `1`) | `lib/client-ip.ts` | How many reverse proxies sit in front of the app. The client IP for rate limiting, login lockout and the bank PSU header is the `X-Forwarded-For` entry that many places from the right. Prod: `1` (Caddy and cloudflared each set the header). `0` = reached directly; the header is ignored and all clients share one bucket. |

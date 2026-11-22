@@ -66,8 +66,9 @@ wrappers where appropriate. Use tags such as
 full inventory is in `src/lib/actions/AGENTS.md` and `docs/architecture.md`.
 
 DB files use `getDataDir`, `getUserDir`, `ensureDir`, encrypted per-entity files,
-and read-modify-write CRUD. Encryption is AES-256-GCM with HKDF-SHA256 for new
-writes and a PBKDF2 compatibility read fallback. Use the migration and rotation
+and read-modify-write CRUD. Encryption is AES-256-GCM; writes use format v2
+(HKDF-SHA256 key, file path bound as GCM associated data), with v1 (HKDF/PBKDF2)
+read compatibility unless `ENCRYPTION_REQUIRE_PATH_BINDING=true`. Use the migration and rotation
 scripts only as documented in [`docs/operations.md`](docs/operations.md).
 
 The UI uses PrimeReact plus Tailwind and AppContext from

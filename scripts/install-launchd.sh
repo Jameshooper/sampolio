@@ -25,7 +25,10 @@ PLIST_FILE="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 LOG_DIR="$HOME/.sampolio/logs"
 DATA_DIR="$HOME/.sampolio/data"
 PORT="${SAMPOLIO_PORT:-3999}"
-HOST="${SAMPOLIO_HOST:-0.0.0.0}"
+# Loopback by default: Caddy and cloudflared reach the app on localhost:3999,
+# and nothing else should be able to bypass them (the rate limiter trusts the
+# X-Forwarded-For entry they set). Set SAMPOLIO_HOST=0.0.0.0 to expose it on the LAN.
+HOST="${SAMPOLIO_HOST:-127.0.0.1}"
 # Build dir prod serves — isolated from dev's `.next` (see next.config.ts). Baked
 # into the plist below so `next start` reads the same dir server-deploy.sh built.
 NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-prod}"
@@ -146,7 +149,11 @@ cat > "$PLIST_FILE" << EOF
         <key>ENABLE_BANKING_BASE_URL</key>
         <string>${ENABLE_BANKING_BASE_URL}</string>}${HA_WEBHOOK_URL:+
         <key>HA_WEBHOOK_URL</key>
-        <string>${HA_WEBHOOK_URL}</string>}${AUTH_URL:+
+        <string>${HA_WEBHOOK_URL}</string>}${TRUSTED_PROXY_HOPS:+
+        <key>TRUSTED_PROXY_HOPS</key>
+        <string>${TRUSTED_PROXY_HOPS}</string>}${ENCRYPTION_REQUIRE_PATH_BINDING:+
+        <key>ENCRYPTION_REQUIRE_PATH_BINDING</key>
+        <string>${ENCRYPTION_REQUIRE_PATH_BINDING}</string>}${AUTH_URL:+
         <key>AUTH_URL</key>
         <string>${AUTH_URL}</string>}
     </dict>

@@ -208,7 +208,7 @@ All data is stored as individually encrypted JSON files in `~/.sampolio/data/` (
 
 > **Note**: A mortgage is the one entity shared by multiple users, so it lives under `shared/` rather than under a single user. Access control is enforced in the action layer by checking the requester against the mortgage's member list.
 
-**Encryption**: AES-256-GCM with per-file HKDF-SHA256 key derivation (fast). Each file has its own random salt and IV. Files written before the HKDF migration are still readable via a backward-compatible PBKDF2 fallback (100,000 iterations, LRU-cached); `scripts/reencrypt-data.mjs` migrates them to the fast format.
+**Encryption**: AES-256-GCM with per-file HKDF-SHA256 key derivation and a random salt and IV per write. Each file is bound to its path (GCM associated data), so an encrypted file copied over another user's file won't decrypt. Older files (no path binding, or the legacy PBKDF2 derivation) stay readable and upgrade on their next write; `scripts/reencrypt-data.mjs` upgrades them all at once (see [`docs/operations.md`](docs/operations.md) §8).
 
 ### Caching Strategy
 
@@ -347,13 +347,18 @@ Then run normally:
 **Alternative: Auto-Generated Secrets**
 
 If you don't provide a `.env` file, secrets are auto-generated on first run:
-- `AUTH_SECRET`: Stored in `~/.sampolio/data/.auth_secret`
-- `ENCRYPTION_KEY`: Stored in `~/.sampolio/data/.encryption_key`
+- `AUTH_SECRET`: Stored in `~/.sampolio/secrets/auth_secret`
+- `ENCRYPTION_KEY`: Stored in `~/.sampolio/secrets/encryption_key`
+
+They are kept outside the data directory so a copy of the data doesn't carry the key;
+back the key up separately. Installs that already have `~/.sampolio/data/.auth_secret`
+/ `.encryption_key` keep working (see [`docs/operations.md`](docs/operations.md) §6 to
+move them).
 
 **Optional Environment Variables** (in .env or as exports):
 ```bash
 SAMPOLIO_PORT=3999                    # Server port (default: 3999)
-SAMPOLIO_HOST=0.0.0.0                # Server host (default: 0.0.0.0)
+SAMPOLIO_HOST=127.0.0.1              # Bind address (default: 127.0.0.1; 0.0.0.0 exposes it on the LAN)
 SAMPOLIO_DATA_DIR=~/.sampolio/data   # Data directory
 ```
 
@@ -379,8 +384,8 @@ tar -xzf ~/sampolio-backup.tar.gz
 
 **Method 2: Using auto-generated secrets**:
 ```bash
-# On source server, backup secrets and data
-tar -czf sampolio-backup.tar.gz -C ~/.sampolio data
+# On source server, backup secrets and data (keep this archive private — it holds the key)
+tar -czf sampolio-backup.tar.gz -C ~/.sampolio data secrets
 
 # Transfer to new server
 scp sampolio-backup.tar.gz new-server:~/
@@ -390,7 +395,7 @@ cd ~
 mkdir -p .sampolio
 tar -xzf sampolio-backup.tar.gz -C .sampolio
 
-# Build, then run - will use existing .auth_secret and .encryption_key files
+# Build, then run - will use the existing secrets/ (or legacy data/.encryption_key) files
 cd ~/sampolio
 ./scripts/server-deploy.sh && ./scripts/run-sampolio.sh
 ```
@@ -440,8 +445,8 @@ open http://localhost:3999
 The repo ships a [`Dockerfile`](Dockerfile) and a [`.dockerignore`](.dockerignore).
 The image runs as the unprivileged `node` user, and the ignore file keeps `.env*`,
 `data/`, `.git` and local build output out of the build context, so secrets and
-financial data are never baked into image layers. (The Dockerfile is not
-exercised by CI; build and smoke-test it before relying on it.)
+financial data are never baked into image layers. The base image is pinned by
+digest, and CI builds the image and smoke-tests the container on every push.
 
 Build and run:
 ```bash
@@ -459,166 +464,6 @@ Keep the host data directory out of the repository folder you build from. If
 the container is reached directly rather than through a reverse proxy, set
 `TRUSTED_PROXY_HOPS=0` (see Environment Variables).
 
-## Environment Variables on Deployment
-
-**Recommended: Using .env File** (ensures secrets stay consistent)
-
-The repo includes a `.env.example` template. Create your `.env` file at the repo root with fixed secrets:
-
-```bash
-# In the cloned repo (~/sampolio)
-cp .env.example .env
-
-# Generate your secrets
-echo "AUTH_SECRET=$(openssl rand -base64 32)" >> .env
-echo "ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
-
-# Edit .env to verify values
-nano .env
-```
-
-Then run normally:
-```bash
-./scripts/run-sampolio.sh  # or ./scripts/install-launchd.sh
-```
-
-**Important**:
-- Keep your `.env` file secure and backed up
-- Never change `ENCRYPTION_KEY` — existing data will be unreadable
-- Never commit `.env` to version control
-
-**Alternative: Auto-Generated Secrets**
-
-If you don't provide a `.env` file, secrets are auto-generated on first run:
-- `AUTH_SECRET`: Stored in `~/.sampolio/data/.auth_secret`
-- `ENCRYPTION_KEY`: Stored in `~/.sampolio/data/.encryption_key`
-
-**Optional Environment Variables** (in .env or as exports):
-```bash
-SAMPOLIO_PORT=3999                    # Server port (default: 3999)
-SAMPOLIO_HOST=0.0.0.0                # Server host (default: 0.0.0.0)
-SAMPOLIO_DATA_DIR=~/.sampolio/data   # Data directory
-```
-
-**Migrating Data Between Servers**:
-
-**Important**: Use the same `ENCRYPTION_KEY` to decrypt existing data.
-
-**Method 1: Copy .env file and data** (simplest):
-```bash
-# On source server, backup everything
-tar -czf sampolio-backup.tar.gz -C ~/sampolio .env -C ~/.sampolio data
-
-# Transfer to new server (clone the repo there first, then:)
-scp sampolio-backup.tar.gz new-server:~/
-
-# On new server, extract into the clone
-cd ~/sampolio
-tar -xzf ~/sampolio-backup.tar.gz
-
-# The .env file from source server is now in place
-./scripts/server-deploy.sh && ./scripts/run-sampolio.sh
-```
-
-**Method 2: Using auto-generated secrets**:
-```bash
-# On source server, backup secrets and data
-tar -czf sampolio-backup.tar.gz -C ~/.sampolio data
-
-# Transfer to new server
-scp sampolio-backup.tar.gz new-server:~/
-
-# On new server, extract before first run
-cd ~
-mkdir -p .sampolio
-tar -xzf sampolio-backup.tar.gz -C .sampolio
-
-# Build, then run - will use existing .auth_secret and .encryption_key files
-cd ~/sampolio
-./scripts/server-deploy.sh && ./scripts/run-sampolio.sh
-```
-
-#### Upgrading to a New Version
-
-On the server, pull the latest code and rebuild in place:
-
-```bash
-cd ~/sampolio
-
-# (Optional) back up your data before a major upgrade
-tar -czf ~/sampolio-data-backup-$(date +%Y%m%d).tar.gz -C ~/.sampolio data
-
-# Pull + install + build in one step
-./scripts/server-deploy.sh --pull
-
-# Reload the service to pick up the new build
-./scripts/install-launchd.sh   # re-running it reloads the launchd agent
-```
-
-If you run manually instead of via launchd, stop with `Ctrl+C` and start again
-with `./scripts/run-sampolio.sh`.
-
-Verify:
-```bash
-tail -f ~/.sampolio/logs/sampolio.log   # if using launchd
-open http://localhost:3999
-```
-
-**Notes**:
-- Your data in `~/.sampolio/data/` and your `.env` are untouched by upgrades.
-- `--pull` runs `git pull --ff-only`; commit or stash local changes first.
-- If `.nvmrc` changed, `server-deploy.sh` installs/activates the new Node version
-  automatically (via fnm/nvm).
-- To roll back: `git checkout <previous-tag-or-commit>` then
-  `./scripts/server-deploy.sh`.
-
-#### Uninstalling Auto-Start
-
-```bash
-./scripts/uninstall-launchd.sh
-```
-
-### Docker Deployment
-
-Create a `Dockerfile`:
-
-```dockerfile
-# Use the Node version pinned in .nvmrc (26)
-FROM node:26-alpine AS builder
-WORKDIR /app
-# Node 25+ no longer bundles corepack — install pnpm directly
-RUN npm i -g pnpm
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-COPY . .
-RUN pnpm build
-
-FROM node:26-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-ENV DATA_DIR=/app/data
-# Copy the built app together with its node_modules and run via `next start`
-COPY --from=builder /app ./
-
-EXPOSE 3999
-CMD ["node", "node_modules/next/dist/bin/next", "start", "-p", "3999", "-H", "0.0.0.0"]
-```
-
-Build and run:
-```bash
-docker build -t sampolio .
-
-# Option 1: Using .env file (recommended)
-docker run -p 3999:3999 -v $(pwd)/data:/app/data --env-file .env sampolio
-
-# Option 2: Explicit environment variables
-docker run -p 3999:3999 \
-  -v $(pwd)/data:/app/data \
-  -e AUTH_SECRET=your-secret \
-  -e ENCRYPTION_KEY=your-key \
-  sampolio
-```
-
 ## Environment Variables
 
 | Variable | Description | Required | Default |
@@ -629,7 +474,7 @@ docker run -p 3999:3999 \
 | `AUTH_URL` | Public URL for auth (behind reverse proxy) | No | - |
 | `DATA_DIR` / `SAMPOLIO_DATA_DIR` | Custom data directory path | No | `~/.sampolio/data` |
 | `PORT` / `SAMPOLIO_PORT` | Server port | No | `3999` |
-| `HOSTNAME` / `SAMPOLIO_HOST` | Server hostname | No | `0.0.0.0` |
+| `HOSTNAME` / `SAMPOLIO_HOST` | Bind address for the launch scripts (`0.0.0.0` exposes the app on the LAN, bypassing the reverse proxy) | No | `127.0.0.1` |
 | `TRUSTED_PROXY_HOPS` | Reverse proxies in front of the app; the client IP used for rate limiting and login lockout is read from that many `X-Forwarded-For` entries from the right. `0` = no proxy (header ignored) | No | `1` |
 | `SAMPOLIO_SECRETS_DIR` | Where the launch scripts keep generated `AUTH_SECRET` / `ENCRYPTION_KEY` files | No | `~/.sampolio/secrets` |
 | `ENABLE_BANKING_APP_ID` | Enable Banking application ID (bank sync) | No | - |
@@ -651,7 +496,7 @@ docker run -p 3999:3999 \
 - **Forms**: React Hook Form + Zod validation
 - **Charts**: ECharts (via echarts-for-react), Chart.js
 - **Date Handling**: date-fns
-- **Encryption**: Node.js crypto (AES-256-GCM, HKDF-SHA256 with a legacy PBKDF2 read fallback)
+- **Encryption**: Node.js crypto (AES-256-GCM, HKDF-SHA256, path-bound associated data; legacy PBKDF2 read fallback)
 - **Password Hashing**: bcryptjs
 - **Bank Sync**: Enable Banking (PSD2 AIS) via `jose` (RS256 JWT) — optional, read-only
 - **IDs**: uuid v14

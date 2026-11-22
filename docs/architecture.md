@@ -204,21 +204,34 @@ data/
 
 Storage granularity is deliberately mixed: **one file per entity** (accounts, items, debts,
 goals, trips…), **one file per collection** (reconciliation snapshots/adjustments/sessions, bank
-transaction ledgers, user preferences), and **monthly chunks** (split expenses). There is no
-file locking; split groups get a per-group in-process mutex (`withGroupLock` in
-`src/lib/actions/split-groups.ts`), everything else relies on the single-user assumption.
+transaction ledgers, user preferences), and **monthly chunks** (split expenses). Locking is
+in-process only (see the storage invariants above): aggregate files use `withFileLock` /
+`serialized`, split groups the per-group `withGroupLock` mutex
+(`src/lib/actions/split-groups.ts`); there is no cross-process locking.
 
 ## 7. Encryption
 
-`src/lib/db/encryption.ts`. Every `.enc` file is `base64(salt(64) | iv(16) | gcmTag(16) | ciphertext)`,
-AES-256-GCM. The per-file key is derived from `ENCRYPTION_KEY` + the random salt via
-**HKDF-SHA256** (`deriveKeyHkdf`, info label `sampolio-file-encryption-v1`); `decrypt()` tries
-HKDF first and falls back to legacy **PBKDF2** (100k iterations, SHA-512, LRU-cached) for
-pre-migration files — GCM tag verification disambiguates the two. If `ENCRYPTION_KEY` is unset,
+`src/lib/db/encryption.ts`, AES-256-GCM with a random 64-byte salt and 16-byte IV per write
+and a pinned 16-byte tag (`salt | iv | tag | ciphertext`). Two formats:
+
+- **v2** (every write, `encryptForPath`): `"sv2:" + base64(...)`, key = HKDF-SHA256(`ENCRYPTION_KEY`,
+  salt, `sampolio-file-encryption-v2`), and the file's DATA_DIR-relative path (`/`-separated,
+  `dataRelativePath`) authenticated as GCM associated data (`sampolio:v2:<path>`). A file only
+  decrypts at the path it was written for: copying one `.enc` over another user's or entity's
+  file fails authentication. Copying the whole tree to another `DATA_DIR` keeps relative paths,
+  so the production-copy workflow still works.
+- **v1** (read-only compatibility, `decrypt`): `base64(...)` with HKDF (`sampolio-file-encryption-v1`)
+  or legacy **PBKDF2** (100k iterations, SHA-512, LRU-cached) keys and no associated data.
+  `decryptForPath` refuses v1 when `ENCRYPTION_REQUIRE_PATH_BINDING=true` (set it after
+  migrating everything with `scripts/reencrypt-data.mjs`, so an old or planted v1 file can't be
+  substituted).
+
+`scripts/lib-file-crypto.mjs` implements the same formats for the re-encrypt and rotation scripts;
+`src/lib/db/file-format-v2.test.ts` checks the two read each other's files. If `ENCRYPTION_KEY` is unset,
 `getEncryptionKey()` **throws in production** (refusing to start); outside production it logs
 a warning and falls back to a hardcoded default key
 (`'sampolio-default-encryption-key-change-in-prod'`) as a dev convenience.
-Details and migration notes: `src/lib/db/AGENTS.md` (one-shot migrator: `scripts/reencrypt-data.mjs`).
+Details and migration notes: `src/lib/db/AGENTS.md` and [`operations.md`](operations.md) §8.
 
 ## 8. Caching
 
@@ -418,7 +431,8 @@ wraps components in ThemeProvider). ~50 test files:
   `reconciliation`, `data-transfer`, `taxed-income`, `path-safety` (traversal ids,
   data-dir containment, import id/field rules, atomic 0600 writes, GCM tag length),
   `concurrency-and-sessions` (first-user race, locked read-modify-write, lockout,
-  dummy-bcrypt timing, session revocation)
+  dummy-bcrypt timing, session revocation), `file-format-v2` (path binding, swapped files,
+  v1 compatibility and refusal, script/app interoperability, re-encrypt and rotation)
 - **Security & regression** (`src/lib/*.test.ts`, `src/proxy.test.ts`,
   `src/lib/actions/security.test.ts`): `security-helpers` (client IP, callback-path
   sanitiser, `escapeHtml`, the raw-tooltip-interpolation guard, member-lookup throttle),
@@ -462,8 +476,10 @@ liquid-glass override layer is loaded after the theme by `theme-provider.tsx`).
 `NEXT_DIST_DIR`; dev uses `.next`.
 
 CI: `.github/workflows/ci.yml` (read-only token, SHA-pinned actions) runs install →
-lint → `tsc --noEmit` → test → `pnpm audit --prod` → build on pushes to `main` and PRs;
-`.github/dependabot.yml` opens weekly npm and monthly Actions update PRs. Transitive
+lint → `tsc --noEmit` → test → `pnpm audit --prod` → build on pushes to `main` and PRs, and a
+`docker` job that builds the `Dockerfile` (base image pinned by digest) and smoke-tests the
+container (HTTP 200, uid 1000, no `.env`/`.git` in the image). `.github/dependabot.yml` opens
+weekly npm and Docker and monthly Actions update PRs. Transitive
 security floors live in `pnpm-workspace.yaml` `overrides`.
 
 Lint: flat config `eslint.config.mjs` = `eslint-config-next/core-web-vitals` +
